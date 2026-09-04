@@ -851,7 +851,7 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
         return;
     }
 
-    iqs9151_report_key_event(dev, data->hold_button, false, true, K_NO_WAIT);
+    iqs9151_report_key_event(dev, data->hold_button, false, true, K_FOREVER);
     data->hold_button = 0U;
 }
 
