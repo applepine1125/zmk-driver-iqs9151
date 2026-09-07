@@ -9,6 +9,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
@@ -213,6 +214,8 @@ struct iqs9151_data {
     struct iqs9151_inertia_gate_params scroll_gate;
     struct iqs9151_inertia_params cursor_params;
     struct iqs9151_inertia_gate_params cursor_gate;
+    atomic_t ic_dirty;
+    atomic_t reati_pending;
 };
 
 #ifdef CONFIG_INPUT_IQS9151_TEST
@@ -536,6 +539,45 @@ static int iqs9151_write_u16(const struct iqs9151_config *cfg, uint16_t reg, uin
 
     sys_put_le16(value, buf);
     return iqs9151_i2c_write(cfg, reg, buf, sizeof(buf));
+}
+
+static int iqs9151_write_ic_param(const struct iqs9151_config *cfg,
+                                  const struct iqs9151_params *params,
+                                  const struct iqs9151_param_def *def) {
+    const int32_t value = iqs9151_params_get(params, def);
+
+    if (def->kind == IQS9151_PARAM_IC_U16) {
+        return iqs9151_write_u16(cfg, def->reg, (uint16_t)value);
+    }
+    return iqs9151_i2c_write(cfg, def->reg, (const uint8_t[]){(uint8_t)value}, 1);
+}
+
+static int iqs9151_run_ati(const struct iqs9151_config *config);
+
+static void iqs9151_apply_pending_ic(const struct device *dev) {
+    struct iqs9151_data *data = dev->data;
+    const struct iqs9151_config *cfg = dev->config;
+    const uint32_t dirty = (uint32_t)atomic_clear(&data->ic_dirty);
+
+    for (size_t i = 0; i < IQS9151_PARAM_IC_COUNT; i++) {
+        if ((dirty & BIT(i)) == 0U) {
+            continue;
+        }
+        const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
+        const int ret = iqs9151_write_ic_param(cfg, &data->params, def);
+
+        if (ret != 0) {
+            LOG_ERR("IC param %s write failed (%d)", def->name, ret);
+        }
+    }
+
+    if (atomic_clear(&data->reati_pending) != 0) {
+        const int ret = iqs9151_run_ati(cfg);
+
+        if (ret != 0) {
+            LOG_ERR("Re-ATI request failed (%d)", ret);
+        }
+    }
 }
 
 static int iqs9151_read_u16(const struct iqs9151_config *cfg, uint16_t reg, uint16_t *value) {
@@ -2268,6 +2310,7 @@ static void iqs9151_work_cb(struct k_work *work) {
         return;
     }
 
+    iqs9151_apply_pending_ic(dev);
     iqs9151_process_frame(data, &frame, now_ms);
 }
 
@@ -2459,78 +2502,9 @@ static int iqs9151_configure(const struct device *dev) {
     return ret;
 }
 
-struct iqs9151_reg_override {
-    uint16_t reg;
-    uint16_t value;
-    bool is_u16;
-    const char *name;
-};
-
-static const struct iqs9151_reg_override iqs9151_sensitivity_overrides[] = {
-    {IQS9151_ADDR_ACTIVE_MODE_SAMPLING_PERIOD,
-     CONFIG_INPUT_IQS9151_ACTIVE_MODE_SAMPLING_PERIOD_MS, true,
-     "active mode sampling period"},
-    {IQS9151_ADDR_IDLE_TOUCH_MODE_SAMPLING_PERIOD,
-     CONFIG_INPUT_IQS9151_IDLE_TOUCH_MODE_SAMPLING_PERIOD_MS, true,
-     "idle-touch mode sampling period"},
-    {IQS9151_ADDR_IDLE_MODE_SAMPLING_PERIOD,
-     CONFIG_INPUT_IQS9151_IDLE_MODE_SAMPLING_PERIOD_MS, true,
-     "idle mode sampling period"},
-    {IQS9151_ADDR_LP1_MODE_SAMPLING_PERIOD,
-     CONFIG_INPUT_IQS9151_LP1_MODE_SAMPLING_PERIOD_MS, true,
-     "LP1 mode sampling period"},
-    {IQS9151_ADDR_LP2_MODE_SAMPLING_PERIOD,
-     CONFIG_INPUT_IQS9151_LP2_MODE_SAMPLING_PERIOD_MS, true,
-     "LP2 mode sampling period"},
-    {IQS9151_ADDR_ACTIVE_MODE_TIMEOUT,
-     CONFIG_INPUT_IQS9151_ACTIVE_MODE_TIMEOUT_MS, true,
-     "active mode timeout"},
-    {IQS9151_ADDR_TOUCH_SET_THRESHOLD,
-     CONFIG_INPUT_IQS9151_TOUCH_SET_THRESHOLD, false,
-     "touch set threshold"},
-    {IQS9151_ADDR_TOUCH_CLEAR_THRESHOLD,
-     CONFIG_INPUT_IQS9151_TOUCH_CLEAR_THRESHOLD, false,
-     "touch clear threshold"},
-    {IQS9151_ADDR_ALP_SET_DEBOUNCE,
-     CONFIG_INPUT_IQS9151_ALP_SET_DEBOUNCE, false,
-     "ALP set debounce"},
-    {IQS9151_ADDR_ALP_CLEAR_DEBOUNCE,
-     CONFIG_INPUT_IQS9151_ALP_CLEAR_DEBOUNCE, false,
-     "ALP clear debounce"},
-    {IQS9151_ADDR_STATIONARY_TOUCH_MOV_THRESHOLD,
-     CONFIG_INPUT_IQS9151_STATIONARY_TOUCH_MOV_THRESHOLD, false,
-     "stationary touch movement threshold"},
-    {IQS9151_ADDR_JITTER_FILTER_DELTA,
-     CONFIG_INPUT_IQS9151_JITTER_FILTER_DELTA, false,
-     "jitter filter delta"},
-    {IQS9151_ADDR_FINGER_CONFIDENCE_THRESHOLD,
-     CONFIG_INPUT_IQS9151_FINGER_CONFIDENCE_THRESHOLD, false,
-     "finger confidence threshold"},
-};
-
-static int iqs9151_apply_sensitivity_overrides(const struct iqs9151_config *cfg) {
-    for (size_t i = 0; i < ARRAY_SIZE(iqs9151_sensitivity_overrides); i++) {
-        const struct iqs9151_reg_override *ov = &iqs9151_sensitivity_overrides[i];
-        int ret;
-
-        if (ov->is_u16) {
-            ret = iqs9151_write_u16(cfg, ov->reg, ov->value);
-        } else {
-            const uint8_t value = (uint8_t)ov->value;
-
-            ret = iqs9151_i2c_write(cfg, ov->reg, &value, 1);
-        }
-        if (ret != 0) {
-            LOG_ERR("Failed to apply %s (%d)", ov->name, ret);
-            return ret;
-        }
-    }
-
-    return 0;
-}
-
 static int iqs9151_apply_kconfig_overrides(const struct device *dev) {
     const struct iqs9151_config *cfg = dev->config;
+    struct iqs9151_data *data = dev->data;
     uint16_t rotate_bits = 0U;
     int ret;
 
@@ -2570,40 +2544,74 @@ static int iqs9151_apply_kconfig_overrides(const struct device *dev) {
         return ret;
     }
 
-    ret = iqs9151_write_u16(cfg, IQS9151_ADDR_TRACKPAD_ATI_TARGET,
-                            (uint16_t)CONFIG_INPUT_IQS9151_ATI_TARGETCOUNT);
-    if (ret != 0) {
-        LOG_ERR("Failed to apply ATI target (%d)", ret);
-        return ret;
+    for (size_t i = 0; i < IQS9151_PARAM_IC_COUNT; i++) {
+        const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
+
+        iqs9151_wait_for_ready(dev, 100);
+        ret = iqs9151_write_ic_param(cfg, &data->params, def);
+        if (ret != 0) {
+            LOG_ERR("IC param %s init write failed (%d)", def->name, ret);
+            return ret;
+        }
     }
 
-    ret = iqs9151_write_u16(cfg, IQS9151_ADDR_XY_DYNAMIC_FILTER_BOTTOM_SPEED,
-                            (uint16_t)CONFIG_INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_SPEED);
+    return 0;
+}
+
+static void iqs9151_mark_ic_dirty(struct iqs9151_data *data,
+                                  const struct iqs9151_param_def *def) {
+    for (size_t i = 0; i < IQS9151_PARAM_IC_COUNT; i++) {
+        if (iqs9151_param_def_at(i) == def) {
+            atomic_or(&data->ic_dirty, BIT(i));
+            return;
+        }
+    }
+}
+
+int iqs9151_dev_param_set(const struct device *dev, const char *name, int32_t value) {
+    struct iqs9151_data *data = dev->data;
+    const struct iqs9151_param_def *def = iqs9151_param_find(name);
+    int ret;
+
+    if (def == NULL) {
+        return -ENOENT;
+    }
+    ret = iqs9151_params_set(&data->params, def, value);
     if (ret != 0) {
-        LOG_ERR("Failed to apply dynamic filter bottom speed (%d)", ret);
         return ret;
     }
-
-    ret = iqs9151_write_u16(cfg, IQS9151_ADDR_XY_DYNAMIC_FILTER_TOP_SPEED,
-                            (uint16_t)CONFIG_INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED);
-    if (ret != 0) {
-        LOG_ERR("Failed to apply dynamic filter top speed (%d)", ret);
-        return ret;
+    if (iqs9151_param_is_ic(def)) {
+        iqs9151_mark_ic_dirty(data, def);
+    } else {
+        iqs9151_sync_inertia_params(data);
     }
+    return 0;
+}
 
-    ret = iqs9151_i2c_write(
-        cfg, IQS9151_ADDR_XY_DYNAMIC_FILTER_BOTTOM_BETA,
-        (const uint8_t[]){(uint8_t)CONFIG_INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_BETA}, 1);
-    if (ret != 0) {
-        LOG_ERR("Failed to apply dynamic filter bottom beta (%d)", ret);
-        return ret;
+int iqs9151_dev_param_get(const struct device *dev, const char *name, int32_t *value) {
+    struct iqs9151_data *data = dev->data;
+    const struct iqs9151_param_def *def = iqs9151_param_find(name);
+
+    if (def == NULL) {
+        return -ENOENT;
     }
+    *value = iqs9151_params_get(&data->params, def);
+    return 0;
+}
 
-    ret = iqs9151_apply_sensitivity_overrides(cfg);
-    if (ret != 0) {
-        return ret;
-    }
+int iqs9151_dev_param_reset(const struct device *dev) {
+    struct iqs9151_data *data = dev->data;
 
+    iqs9151_params_init(&data->params);
+    iqs9151_sync_inertia_params(data);
+    atomic_or(&data->ic_dirty, BIT_MASK(IQS9151_PARAM_IC_COUNT));
+    return 0;
+}
+
+int iqs9151_dev_request_reati(const struct device *dev) {
+    struct iqs9151_data *data = dev->data;
+
+    atomic_set(&data->reati_pending, 1);
     return 0;
 }
 
@@ -2865,6 +2873,31 @@ struct iqs9151_params *iqs9151_test_params(void *ctx) {
 
 void iqs9151_test_sync_params(void *ctx) {
     iqs9151_sync_inertia_params((struct iqs9151_data *)ctx);
+}
+
+uint32_t iqs9151_test_ic_dirty(const void *ctx) {
+    const struct iqs9151_data *data = (const struct iqs9151_data *)ctx;
+
+    return (uint32_t)atomic_get(&data->ic_dirty);
+}
+
+bool iqs9151_test_reati_pending(const void *ctx) {
+    const struct iqs9151_data *data = (const struct iqs9151_data *)ctx;
+
+    return atomic_get(&data->reati_pending) != 0;
+}
+
+uint16_t iqs9151_test_scroll_inertia_decay(const void *ctx) {
+    const struct iqs9151_data *data = (const struct iqs9151_data *)ctx;
+
+    return data->scroll_params.decay_num;
+}
+
+const struct device *iqs9151_test_fake_dev(void *ctx) {
+    static struct device fake_dev;
+
+    fake_dev.data = ctx;
+    return &fake_dev;
 }
 #endif
 

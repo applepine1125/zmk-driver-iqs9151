@@ -5,6 +5,7 @@
 #include "iqs9151_regs.h"
 #include "iqs9151_test.h"
 
+#include <errno.h>
 #include <string.h>
 
 #define IQS9151_TEST_CTX_BUF_SIZE 1536
@@ -1452,6 +1453,67 @@ ZTEST_F(iqs9151_work_cb, test_default_1f_tap_max_ms_accepts_100ms_tap) {
     zassert_equal(fixture->log.events[0].type, IQS9151_TEST_EVENT_KEY, NULL);
     zassert_equal(fixture->log.events[0].code, INPUT_BTN_0, NULL);
     zassert_equal(fixture->log.events[0].value, 1, NULL);
+}
+
+/* driver 系を set すると、即座に値が変わり保留ビットは立たない */
+ZTEST_F(iqs9151_work_cb, test_driver_param_set_applies_immediately_without_ic_dirty) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    int32_t value = 0;
+
+    zassert_equal(iqs9151_dev_param_set(dev, "2f_scroll_start_move", 15), 0, NULL);
+    zassert_equal(iqs9151_dev_param_get(dev, "2f_scroll_start_move", &value), 0, NULL);
+    zassert_equal(value, 15, NULL);
+    zassert_equal(iqs9151_test_ic_dirty(fixture->ctx), 0U, NULL);
+}
+
+/* 慣性系を set すると、慣性パラメータにも反映される */
+ZTEST_F(iqs9151_work_cb, test_inertia_param_set_syncs_inertia_params) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "scroll_inertia_decay", 900), 0, NULL);
+    zassert_equal(iqs9151_test_scroll_inertia_decay(fixture->ctx), 900, NULL);
+}
+
+/* IC 系を set すると、そのパラメータの保留ビットが立つ */
+ZTEST_F(iqs9151_work_cb, test_ic_param_set_marks_dirty_bit) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_param_def *def = iqs9151_param_find("touch_set_threshold");
+    size_t idx = 0;
+
+    while (iqs9151_param_def_at(idx) != def) {
+        idx++;
+    }
+    zassert_equal(iqs9151_dev_param_set(dev, "touch_set_threshold", 40), 0, NULL);
+    zassert_equal(iqs9151_test_ic_dirty(fixture->ctx), BIT(idx), NULL);
+}
+
+/* 未知の名前と範囲外の値を set すると、エラーになる */
+ZTEST_F(iqs9151_work_cb, test_unknown_name_and_out_of_range_return_errors) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "no_such", 1), -ENOENT, NULL);
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_tap_max_ms", 5000), -ERANGE, NULL);
+}
+
+/* 値を変更した後に reset すると、既定値に戻り IC 系がすべて保留になる */
+ZTEST_F(iqs9151_work_cb, test_reset_restores_defaults_and_marks_all_ic_dirty) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    int32_t value = 0;
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_tap_max_ms", 500), 0, NULL);
+    zassert_equal(iqs9151_dev_param_reset(dev), 0, NULL);
+    zassert_equal(iqs9151_dev_param_get(dev, "1f_tap_max_ms", &value), 0, NULL);
+    zassert_equal(value, CONFIG_INPUT_IQS9151_1F_TAP_MAX_MS, NULL);
+    zassert_equal(iqs9151_test_ic_dirty(fixture->ctx), BIT_MASK(IQS9151_PARAM_IC_COUNT), NULL);
+}
+
+/* Re-ATI を要求すると、保留フラグが立つ */
+ZTEST_F(iqs9151_work_cb, test_request_reati_sets_pending_flag) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+
+    zassert_false(iqs9151_test_reati_pending(fixture->ctx), NULL);
+    zassert_equal(iqs9151_dev_request_reati(dev), 0, NULL);
+    zassert_true(iqs9151_test_reati_pending(fixture->ctx), NULL);
 }
 
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);
