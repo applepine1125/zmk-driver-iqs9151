@@ -1,0 +1,50 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ztest:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/zmkfirmware/zmk-build-arm:3.5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: modules/zmk-driver-iqs9151
+
+      - name: Cache west modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            zmk
+            zephyr
+            modules/hal
+            modules/lib
+            modules/crypto
+            modules/debug
+            modules/fs
+            tools
+          key: ${{ runner.os }}-west-${{ hashFiles('modules/zmk-driver-iqs9151/west.yml') }}
+
+      - name: Initialize workspace
+        run: west init -l modules/zmk-driver-iqs9151
+
+      - name: Update modules
+        run: west update --fetch-opt=--filter=tree:0
+
+      - name: Export Zephyr CMake package
+        run: west zephyr-export
+
+      - name: Run tests
+        run: |
+          status=0
+          for t in $(ls modules/zmk-driver-iqs9151/tests | grep -v '\.sh$'); do
+            echo "=== $t ==="
+            west build -p always -b native_sim_64 -d "build/$t" "modules/zmk-driver-iqs9151/tests/$t" -t run || status=1
+          done
+          exit $status

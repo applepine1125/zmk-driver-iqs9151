@@ -1,0 +1,14 @@
+# ztest 実行用の west ワークスペース定義。
+# このリポジトリを <ws>/modules/zmk-driver-iqs9151 に置き、<ws> で
+# `west init -l modules/zmk-driver-iqs9151 && west update` する。
+manifest:
+  remotes:
+    - name: zmkfirmware
+      url-base: https://github.com/zmkfirmware
+  projects:
+    - name: zmk
+      remote: zmkfirmware
+      revision: v0.3.0
+      import: app/west.yml
+  self:
+    path: modules/zmk-driver-iqs9151
