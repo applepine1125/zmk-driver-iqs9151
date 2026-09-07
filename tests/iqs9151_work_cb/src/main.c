@@ -1516,4 +1516,13 @@ ZTEST_F(iqs9151_work_cb, test_request_reati_sets_pending_flag) {
     zassert_true(iqs9151_test_reati_pending(fixture->ctx), NULL);
 }
 
+/* トレースは既定で無効で、有効化と無効化ができる */
+ZTEST(iqs9151_work_cb, test_trace_disabled_by_default_and_can_be_enabled_and_disabled) {
+    zassert_false(iqs9151_dev_trace_enabled(), NULL);
+    iqs9151_dev_trace_enable(true);
+    zassert_true(iqs9151_dev_trace_enabled(), NULL);
+    iqs9151_dev_trace_enable(false);
+    zassert_false(iqs9151_dev_trace_enabled(), NULL);
+}
+
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);

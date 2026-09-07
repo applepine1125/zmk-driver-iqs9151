@@ -24,6 +24,16 @@
 
 LOG_MODULE_REGISTER(iqs9151, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 
+static bool iqs9151_trace_enabled;
+
+void iqs9151_dev_trace_enable(bool enable) {
+    iqs9151_trace_enabled = enable;
+}
+
+bool iqs9151_dev_trace_enabled(void) {
+    return iqs9151_trace_enabled;
+}
+
 #define DT_DRV_COMPAT azoteq_iqs9151
 
 #define IQS9151_I2C_CHUNK_SIZE 30
@@ -238,10 +248,18 @@ static int iqs9151_report_key_event(const struct device *dev, uint16_t code,
             .timeout = timeout,
         };
         iqs9151_test_hook.hook(&event, iqs9151_test_hook.user_data);
+        if (iqs9151_trace_enabled) {
+            LOG_INF("T E %u K %u %d %d", (uint32_t)k_uptime_get(), code, (int)!!value, 0);
+        }
         return 0;
     }
 #endif
-    return input_report_key(dev, code, value, sync, timeout);
+    const int ret = input_report_key(dev, code, value, sync, timeout);
+
+    if (iqs9151_trace_enabled) {
+        LOG_INF("T E %u K %u %d %d", (uint32_t)k_uptime_get(), code, (int)!!value, ret);
+    }
+    return ret;
 }
 
 static int iqs9151_report_rel_event(const struct device *dev, uint16_t code,
@@ -257,10 +275,18 @@ static int iqs9151_report_rel_event(const struct device *dev, uint16_t code,
             .timeout = timeout,
         };
         iqs9151_test_hook.hook(&event, iqs9151_test_hook.user_data);
+        if (iqs9151_trace_enabled) {
+            LOG_INF("T E %u R %u %d %d", (uint32_t)k_uptime_get(), code, value, 0);
+        }
         return 0;
     }
 #endif
-    return input_report_rel(dev, code, value, sync, timeout);
+    const int ret = input_report_rel(dev, code, value, sync, timeout);
+
+    if (iqs9151_trace_enabled) {
+        LOG_INF("T E %u R %u %d %d", (uint32_t)k_uptime_get(), code, value, ret);
+    }
+    return ret;
 }
 
 static const uint8_t iqs9151_alp_compensation[] = {
@@ -2280,6 +2306,17 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
 
     iqs9151_report_frame_events(dev, frame, &two_result, cursor_moving,
                                 suppress_cursor_tail);
+
+    if (iqs9151_trace_enabled) {
+        const uint32_t pending_bits = (data->one_finger_click_pending ? BIT(0) : 0U) |
+                                      (data->two_finger_click_pending ? BIT(1) : 0U) |
+                                      (data->three_finger_click_pending ? BIT(2) : 0U);
+
+        LOG_INF("T F %u %u %d %d %u %u %u %u %04x %u %u %u", (uint32_t)now_ms,
+                frame->finger_count, frame->rel_x, frame->rel_y, frame->finger1_x,
+                frame->finger1_y, frame->finger2_x, frame->finger2_y, frame->trackpad_flags,
+                data->hold_button, (unsigned int)data->two_finger.mode, pending_bits);
+    }
 
     LOG_DBG("rel x=%d y=%d info=0x%04x tp=0x%04x finger=%d f1x=%u f1y=%u f2x=%u f2y=%u",
             frame->rel_x, frame->rel_y, frame->info_flags, frame->trackpad_flags,
