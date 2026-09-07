@@ -1,6 +1,14 @@
 # ztest 実行用の west ワークスペース定義。
-# このリポジトリを <ws>/modules/zmk-driver-iqs9151 に置き、<ws> で
-# `west init -l modules/zmk-driver-iqs9151 && west update` する。
+# このリポジトリを <ws>/modules/zmk-driver-iqs9151 に置く。
+# `west init -l modules/zmk-driver-iqs9151` は topdir をリポジトリ直上の
+# 親ディレクトリ(modules/)にしてしまい、self.path の2階層構成と噛み合わない
+# (west の仕様上、`-l` はマニフェストリポジトリの直接の親を topdir とするため)。
+# そのため <ws> 直下に .west/config を
+#   [manifest]
+#   path = modules/zmk-driver-iqs9151
+#   file = west.yml
+# として直接作成してから `west update` する。実際の手順は
+# tests/run.sh と .github/workflows/test.yml を参照。
 manifest:
   remotes:
     - name: zmkfirmware
