@@ -448,6 +448,14 @@ config INPUT_IQS9151_3F_SWIPE_THRESHOLD
     help
       Three-finger swipe threshold (driver-side).
 
+config INPUT_IQS9151_SHELL
+    bool "IQS9151 tp shell command"
+    depends on SHELL
+    default n
+    help
+      Add the "tp" shell command to inspect and change gesture and
+      sensitivity parameters at runtime (used by tools/tp-tuner).
+
 config INPUT_IQS9151_TEST
     bool "IQS9151 test hooks"
     depends on ZTEST

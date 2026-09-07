@@ -94,3 +94,18 @@
 |Symbol|Type|Default|役割|
 | - | - | - | - |
 |`CONFIG_INPUT_IQS9151_TEST`|bool|`n`|ZTEST用の内部テストフック有効化（`depends on ZTEST`）|
+
+## ランタイム調整(INPUT_IQS9151_SHELL)
+
+`CONFIG_INPUT_IQS9151_SHELL=y`(`CONFIG_SHELL=y` が必要)で `tp` シェルコマンドが使える。
+パラメータ名は `CONFIG_INPUT_IQS9151_<NAME>` の `<NAME>` を小文字化したもの(例 `1f_tap_max_ms`)。
+IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレーム処理時に書き込まれる。
+変更は揮発性で、再起動すると Kconfig の値に戻る。
+
+    tp info                  side=central|peripheral uptime_ms=<n> params=<count>
+    tp list                  <name> <value> <min> <max> <kind> <default>
+    tp get <name>
+    tp set <name> <value>
+    tp reset
+    tp reati
+    tp trace on|off          T F / T E 行を LOG(INF) に出す

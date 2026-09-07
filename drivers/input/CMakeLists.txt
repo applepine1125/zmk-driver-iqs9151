@@ -2,3 +2,4 @@ zephyr_library_amend()
 
 zephyr_library_sources_ifdef(CONFIG_INPUT_IQS9151 iqs9151.c)
 zephyr_library_sources_ifdef(CONFIG_INPUT_IQS9151 iqs9151_params.c)
+zephyr_library_sources_ifdef(CONFIG_INPUT_IQS9151_SHELL iqs9151_shell.c)
