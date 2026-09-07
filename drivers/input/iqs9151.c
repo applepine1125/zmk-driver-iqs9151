@@ -2470,6 +2470,76 @@ static int iqs9151_configure(const struct device *dev) {
     return ret;
 }
 
+struct iqs9151_reg_override {
+    uint16_t reg;
+    uint16_t value;
+    bool is_u16;
+    const char *name;
+};
+
+static const struct iqs9151_reg_override iqs9151_sensitivity_overrides[] = {
+    {IQS9151_ADDR_ACTIVE_MODE_SAMPLING_PERIOD,
+     CONFIG_INPUT_IQS9151_ACTIVE_MODE_SAMPLING_PERIOD_MS, true,
+     "active mode sampling period"},
+    {IQS9151_ADDR_IDLE_TOUCH_MODE_SAMPLING_PERIOD,
+     CONFIG_INPUT_IQS9151_IDLE_TOUCH_MODE_SAMPLING_PERIOD_MS, true,
+     "idle-touch mode sampling period"},
+    {IQS9151_ADDR_IDLE_MODE_SAMPLING_PERIOD,
+     CONFIG_INPUT_IQS9151_IDLE_MODE_SAMPLING_PERIOD_MS, true,
+     "idle mode sampling period"},
+    {IQS9151_ADDR_LP1_MODE_SAMPLING_PERIOD,
+     CONFIG_INPUT_IQS9151_LP1_MODE_SAMPLING_PERIOD_MS, true,
+     "LP1 mode sampling period"},
+    {IQS9151_ADDR_LP2_MODE_SAMPLING_PERIOD,
+     CONFIG_INPUT_IQS9151_LP2_MODE_SAMPLING_PERIOD_MS, true,
+     "LP2 mode sampling period"},
+    {IQS9151_ADDR_ACTIVE_MODE_TIMEOUT,
+     CONFIG_INPUT_IQS9151_ACTIVE_MODE_TIMEOUT_MS, true,
+     "active mode timeout"},
+    {IQS9151_ADDR_TOUCH_SET_THRESHOLD,
+     CONFIG_INPUT_IQS9151_TOUCH_SET_THRESHOLD, false,
+     "touch set threshold"},
+    {IQS9151_ADDR_TOUCH_CLEAR_THRESHOLD,
+     CONFIG_INPUT_IQS9151_TOUCH_CLEAR_THRESHOLD, false,
+     "touch clear threshold"},
+    {IQS9151_ADDR_ALP_SET_DEBOUNCE,
+     CONFIG_INPUT_IQS9151_ALP_SET_DEBOUNCE, false,
+     "ALP set debounce"},
+    {IQS9151_ADDR_ALP_CLEAR_DEBOUNCE,
+     CONFIG_INPUT_IQS9151_ALP_CLEAR_DEBOUNCE, false,
+     "ALP clear debounce"},
+    {IQS9151_ADDR_STATIONARY_TOUCH_MOV_THRESHOLD,
+     CONFIG_INPUT_IQS9151_STATIONARY_TOUCH_MOV_THRESHOLD, false,
+     "stationary touch movement threshold"},
+    {IQS9151_ADDR_JITTER_FILTER_DELTA,
+     CONFIG_INPUT_IQS9151_JITTER_FILTER_DELTA, false,
+     "jitter filter delta"},
+    {IQS9151_ADDR_FINGER_CONFIDENCE_THRESHOLD,
+     CONFIG_INPUT_IQS9151_FINGER_CONFIDENCE_THRESHOLD, false,
+     "finger confidence threshold"},
+};
+
+static int iqs9151_apply_sensitivity_overrides(const struct iqs9151_config *cfg) {
+    for (size_t i = 0; i < ARRAY_SIZE(iqs9151_sensitivity_overrides); i++) {
+        const struct iqs9151_reg_override *ov = &iqs9151_sensitivity_overrides[i];
+        int ret;
+
+        if (ov->is_u16) {
+            ret = iqs9151_write_u16(cfg, ov->reg, ov->value);
+        } else {
+            const uint8_t value = (uint8_t)ov->value;
+
+            ret = iqs9151_i2c_write(cfg, ov->reg, &value, 1);
+        }
+        if (ret != 0) {
+            LOG_ERR("Failed to apply %s (%d)", ov->name, ret);
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
 static int iqs9151_apply_kconfig_overrides(const struct device *dev) {
     const struct iqs9151_config *cfg = dev->config;
     uint16_t rotate_bits = 0U;
@@ -2537,6 +2607,11 @@ static int iqs9151_apply_kconfig_overrides(const struct device *dev) {
         (const uint8_t[]){(uint8_t)CONFIG_INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_BETA}, 1);
     if (ret != 0) {
         LOG_ERR("Failed to apply dynamic filter bottom beta (%d)", ret);
+        return ret;
+    }
+
+    ret = iqs9151_apply_sensitivity_overrides(cfg);
+    if (ret != 0) {
         return ret;
     }
 
