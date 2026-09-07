@@ -32,7 +32,18 @@ jobs:
           key: ${{ runner.os }}-west-${{ hashFiles('modules/zmk-driver-iqs9151/west.yml') }}
 
       - name: Initialize workspace
-        run: west init -l modules/zmk-driver-iqs9151
+        # `west init -l modules/zmk-driver-iqs9151` は topdir をリポジトリの
+        # 直上の親ディレクトリ(= modules/)にしてしまい、CMakeLists.txt が前提とする
+        # 「topdir 直下に zmk/ を置く」レイアウトと合わなくなる(west の仕様上、
+        # `-l` はマニフェストリポジトリの直接の親を topdir とするため)。
+        # そのため .west/config を直接作成し、topdir をチェックアウトルートに固定する。
+        run: |
+          mkdir -p .west
+          cat > .west/config << 'EOF'
+          [manifest]
+          path = modules/zmk-driver-iqs9151
+          file = west.yml
+          EOF
 
       - name: Update modules
         run: west update --fetch-opt=--filter=tree:0

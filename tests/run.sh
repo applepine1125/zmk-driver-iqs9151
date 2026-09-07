@@ -18,8 +18,17 @@ docker run --rm \
   -v "$REPO_DIR:/ws/modules/zmk-driver-iqs9151" \
   -w /ws \
   "$IMAGE" bash -ec '
+    # `west init -l modules/zmk-driver-iqs9151` は topdir をリポジトリ直上の
+    # 親ディレクトリ(modules/)にしてしまい、CMakeLists.txt が前提とする
+    # 「topdir 直下に zmk/ を置く」レイアウトと合わなくなるため、
+    # .west/config を直接作成して topdir をワークスペースルートに固定する。
     if [ ! -d .west ]; then
-      west init -l modules/zmk-driver-iqs9151
+      mkdir -p .west
+      cat > .west/config << "EOC"
+[manifest]
+path = modules/zmk-driver-iqs9151
+file = west.yml
+EOC
     fi
     west update --fetch-opt=--filter=tree:0
     west zephyr-export
