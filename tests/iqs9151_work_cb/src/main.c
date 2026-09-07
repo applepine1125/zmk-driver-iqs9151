@@ -1,6 +1,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/ztest.h>
 
+#include "iqs9151_params.h"
 #include "iqs9151_regs.h"
 #include "iqs9151_test.h"
 
@@ -1416,6 +1417,41 @@ ZTEST_F(iqs9151_work_cb, test_three_finger_swipe_left_continuous_touch_emits_onc
     zassert_equal(fixture->log.events[1].type, IQS9151_TEST_EVENT_KEY, "Event[1] not key");
     zassert_equal(fixture->log.events[1].code, INPUT_BTN_4, "Event[1] unexpected code");
     zassert_equal(fixture->log.events[1].value, 0, "Event[1] should be BTN4 release");
+}
+
+/* 1f_tap_max_ms を 50 に下げたとき、100ms のタップを処理するとタップ判定されない */
+ZTEST_F(iqs9151_work_cb, test_lowered_1f_tap_max_ms_rejects_100ms_tap) {
+    struct iqs9151_params *params = iqs9151_test_params(fixture->ctx);
+    const struct iqs9151_param_def *def = iqs9151_param_find("1f_tap_max_ms");
+    const struct iqs9151_test_frame down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 1000, 1000, 0, 0);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    zassert_equal(iqs9151_params_set(params, def, 50), 0, NULL);
+    iqs9151_test_sync_params(fixture->ctx);
+
+    iqs9151_test_process_frame(fixture->ctx, &down, k_uptime_get());
+    k_msleep(100);
+    iqs9151_test_process_frame(fixture->ctx, &up, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 0U, "100ms のタップはタップ判定されない(events=%u)",
+                  (unsigned int)fixture->log.count);
+}
+
+/* 既定値のままのとき、100ms のタップを処理すると BTN0 が押される */
+ZTEST_F(iqs9151_work_cb, test_default_1f_tap_max_ms_accepts_100ms_tap) {
+    const struct iqs9151_test_frame down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 1000, 1000, 0, 0);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &down, k_uptime_get());
+    k_msleep(100);
+    iqs9151_test_process_frame(fixture->ctx, &up, k_uptime_get());
+
+    zassert_true(fixture->log.count >= 1U, "タップで press が出る");
+    zassert_equal(fixture->log.events[0].type, IQS9151_TEST_EVENT_KEY, NULL);
+    zassert_equal(fixture->log.events[0].code, INPUT_BTN_0, NULL);
+    zassert_equal(fixture->log.events[0].value, 1, NULL);
 }
 
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);

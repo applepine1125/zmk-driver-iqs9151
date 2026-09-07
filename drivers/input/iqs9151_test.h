@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "iqs9151_params.h"
+
 struct iqs9151_test_frame {
     int16_t rel_x;
     int16_t rel_y;
@@ -52,6 +54,8 @@ uint8_t iqs9151_test_prev_finger_count(const void *ctx);
 bool iqs9151_test_cursor_inertia_active(const void *ctx);
 bool iqs9151_test_scroll_inertia_active(const void *ctx);
 void iqs9151_test_force_pinch_session(void *ctx, bool active);
+struct iqs9151_params *iqs9151_test_params(void *ctx);
+void iqs9151_test_sync_params(void *ctx);
 #endif
 
 #endif /* ZEPHYR_DRIVERS_INPUT_IQS9151_TEST_H_ */

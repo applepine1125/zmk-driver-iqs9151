@@ -12,6 +12,7 @@ zephyr_syscall_header(${ZMK_APP_DIR}/include/drivers/input_processor.h)
 target_sources(app PRIVATE
     src/main.c
     ../../drivers/input/iqs9151.c
+    ../../drivers/input/iqs9151_params.c
 )
 
 target_include_directories(app PRIVATE
