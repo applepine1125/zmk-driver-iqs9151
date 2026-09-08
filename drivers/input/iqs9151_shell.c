@@ -2,12 +2,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "iqs9151_params.h"
-
-#define DT_DRV_COMPAT azoteq_iqs9151
 
 static const struct device *tp_device(const struct shell *sh) {
     const struct device *dev = DEVICE_DT_GET_ANY(azoteq_iqs9151);
@@ -34,6 +33,7 @@ static int cmd_tp_info(const struct shell *sh, size_t argc, char **argv) {
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
 
+    /* Non-split builds (CONFIG_ZMK_SPLIT_ROLE_CENTRAL unset) also report "peripheral". */
     shell_print(sh, "side=%s uptime_ms=%u params=%u",
                 IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) ? "central" : "peripheral",
                 (uint32_t)k_uptime_get(), (unsigned int)iqs9151_param_count());

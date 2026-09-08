@@ -1501,10 +1501,13 @@ ZTEST_F(iqs9151_work_cb, test_reset_restores_defaults_and_marks_all_ic_dirty) {
     int32_t value = 0;
 
     zassert_equal(iqs9151_dev_param_set(dev, "1f_tap_max_ms", 500), 0, NULL);
+    zassert_equal(iqs9151_dev_param_set(dev, "scroll_inertia_decay", 900), 0, NULL);
     zassert_equal(iqs9151_dev_param_reset(dev), 0, NULL);
     zassert_equal(iqs9151_dev_param_get(dev, "1f_tap_max_ms", &value), 0, NULL);
     zassert_equal(value, CONFIG_INPUT_IQS9151_1F_TAP_MAX_MS, NULL);
     zassert_equal(iqs9151_test_ic_dirty(fixture->ctx), BIT_MASK(IQS9151_PARAM_IC_COUNT), NULL);
+    zassert_equal(iqs9151_test_scroll_inertia_decay(fixture->ctx),
+                 CONFIG_INPUT_IQS9151_SCROLL_INERTIA_DECAY, NULL);
 }
 
 /* Re-ATI を要求すると、保留フラグが立つ */

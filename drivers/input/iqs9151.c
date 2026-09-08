@@ -504,41 +504,38 @@ static const uint8_t iqs9151_snap_enable[] = {
     SNAPCHANNELENABLE_84, SNAPCHANNELENABLE_85, SNAPCHANNELENABLE_86,
     SNAPCHANNELENABLE_87,
 };
+static void iqs9151_init_inertia_consts(struct iqs9151_data *data) {
+    data->scroll_params.interval_ms = SCROLL_INERTIA_INTERVAL_MS;
+    data->scroll_params.max_duration_ms = SCROLL_INERTIA_MAX_DURATION_MS;
+    data->scroll_params.decay_den = SCROLL_INERTIA_DECAY_DEN;
+    data->scroll_params.fp_shift = INERTIA_FP_SHIFT;
+    data->scroll_params.start_threshold = SCROLL_INERTIA_START_THRESHOLD;
+    data->scroll_params.min_velocity = SCROLL_INERTIA_MIN_VELOCITY;
+    data->scroll_params.ema_alpha = SCROLL_EMA_ALPHA;
+
+    data->cursor_params.interval_ms = CURSOR_INERTIA_INTERVAL_MS;
+    data->cursor_params.max_duration_ms = CURSOR_INERTIA_MAX_DURATION_MS;
+    data->cursor_params.decay_den = CURSOR_INERTIA_DECAY_DEN;
+    data->cursor_params.fp_shift = INERTIA_FP_SHIFT;
+    data->cursor_params.start_threshold = CURSOR_INERTIA_START_THRESHOLD;
+    data->cursor_params.min_velocity = CURSOR_INERTIA_MIN_VELOCITY;
+    data->cursor_params.ema_alpha = CURSOR_EMA_ALPHA;
+}
+
 static void iqs9151_sync_inertia_params(struct iqs9151_data *data) {
     const struct iqs9151_params *p = &data->params;
 
-    data->scroll_params = (struct iqs9151_inertia_params){
-        .interval_ms = SCROLL_INERTIA_INTERVAL_MS,
-        .max_duration_ms = SCROLL_INERTIA_MAX_DURATION_MS,
-        .decay_num = (uint16_t)p->scroll_inertia_decay,
-        .decay_den = SCROLL_INERTIA_DECAY_DEN,
-        .fp_shift = INERTIA_FP_SHIFT,
-        .start_threshold = SCROLL_INERTIA_START_THRESHOLD,
-        .min_velocity = SCROLL_INERTIA_MIN_VELOCITY,
-        .ema_alpha = SCROLL_EMA_ALPHA,
-    };
-    data->scroll_gate = (struct iqs9151_inertia_gate_params){
-        .recent_window_ms = (uint16_t)p->scroll_inertia_recent_window_ms,
-        .stale_gap_ms = (uint16_t)p->scroll_inertia_stale_gap_ms,
-        .min_samples = (uint8_t)p->scroll_inertia_min_samples,
-        .min_avg_speed = (int16_t)p->scroll_inertia_min_avg_speed,
-    };
-    data->cursor_params = (struct iqs9151_inertia_params){
-        .interval_ms = CURSOR_INERTIA_INTERVAL_MS,
-        .max_duration_ms = CURSOR_INERTIA_MAX_DURATION_MS,
-        .decay_num = (uint16_t)p->cursor_inertia_decay,
-        .decay_den = CURSOR_INERTIA_DECAY_DEN,
-        .fp_shift = INERTIA_FP_SHIFT,
-        .start_threshold = CURSOR_INERTIA_START_THRESHOLD,
-        .min_velocity = CURSOR_INERTIA_MIN_VELOCITY,
-        .ema_alpha = CURSOR_EMA_ALPHA,
-    };
-    data->cursor_gate = (struct iqs9151_inertia_gate_params){
-        .recent_window_ms = (uint16_t)p->cursor_inertia_recent_window_ms,
-        .stale_gap_ms = (uint16_t)p->cursor_inertia_stale_gap_ms,
-        .min_samples = (uint8_t)p->cursor_inertia_min_samples,
-        .min_avg_speed = (int16_t)p->cursor_inertia_min_avg_speed,
-    };
+    data->scroll_params.decay_num = (uint16_t)p->scroll_inertia_decay;
+    data->scroll_gate.recent_window_ms = (uint16_t)p->scroll_inertia_recent_window_ms;
+    data->scroll_gate.stale_gap_ms = (uint16_t)p->scroll_inertia_stale_gap_ms;
+    data->scroll_gate.min_samples = (uint8_t)p->scroll_inertia_min_samples;
+    data->scroll_gate.min_avg_speed = (int16_t)p->scroll_inertia_min_avg_speed;
+
+    data->cursor_params.decay_num = (uint16_t)p->cursor_inertia_decay;
+    data->cursor_gate.recent_window_ms = (uint16_t)p->cursor_inertia_recent_window_ms;
+    data->cursor_gate.stale_gap_ms = (uint16_t)p->cursor_inertia_stale_gap_ms;
+    data->cursor_gate.min_samples = (uint8_t)p->cursor_inertia_min_samples;
+    data->cursor_gate.min_avg_speed = (int16_t)p->cursor_inertia_min_avg_speed;
 }
 
 static int iqs9151_i2c_write(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
@@ -594,6 +591,7 @@ static void iqs9151_apply_pending_ic(const struct device *dev) {
 
         if (ret != 0) {
             LOG_ERR("IC param %s write failed (%d)", def->name, ret);
+            atomic_or(&data->ic_dirty, BIT(i));
         }
     }
 
@@ -2584,7 +2582,6 @@ static int iqs9151_apply_kconfig_overrides(const struct device *dev) {
     for (size_t i = 0; i < IQS9151_PARAM_IC_COUNT; i++) {
         const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
 
-        iqs9151_wait_for_ready(dev, 100);
         ret = iqs9151_write_ic_param(cfg, &data->params, def);
         if (ret != 0) {
             LOG_ERR("IC param %s init write failed (%d)", def->name, ret);
@@ -2658,6 +2655,7 @@ static int iqs9151_init(const struct device *dev) {
     int ret;
     data->dev = dev;
     iqs9151_params_init(&data->params);
+    iqs9151_init_inertia_consts(data);
     iqs9151_sync_inertia_params(data);
 
     LOG_DBG("Initialization Start");
@@ -2804,6 +2802,7 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     memset(data, 0, sizeof(*data));
     data->dev = dev;
     iqs9151_params_init(&data->params);
+    iqs9151_init_inertia_consts(data);
     iqs9151_sync_inertia_params(data);
     k_work_init(&data->work, iqs9151_work_cb);
     k_work_init_delayable(&data->one_finger_click_work, iqs9151_one_finger_click_work_cb);

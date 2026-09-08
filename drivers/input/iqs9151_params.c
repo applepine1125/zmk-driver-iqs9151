@@ -62,6 +62,11 @@ static int32_t *iqs9151_param_slot(struct iqs9151_params *p,
     return (int32_t *)((uint8_t *)p + def->offset);
 }
 
+static const int32_t *iqs9151_param_slot_const(const struct iqs9151_params *p,
+                                               const struct iqs9151_param_def *def) {
+    return (const int32_t *)((const uint8_t *)p + def->offset);
+}
+
 void iqs9151_params_init(struct iqs9151_params *p) {
     for (size_t i = 0; i < ARRAY_SIZE(iqs9151_param_table); i++) {
         *iqs9151_param_slot(p, &iqs9151_param_table[i]) = iqs9151_param_table[i].def;
@@ -79,5 +84,5 @@ int iqs9151_params_set(struct iqs9151_params *p, const struct iqs9151_param_def 
 
 int32_t iqs9151_params_get(const struct iqs9151_params *p,
                            const struct iqs9151_param_def *def) {
-    return *iqs9151_param_slot((struct iqs9151_params *)p, def);
+    return *iqs9151_param_slot_const(p, def);
 }

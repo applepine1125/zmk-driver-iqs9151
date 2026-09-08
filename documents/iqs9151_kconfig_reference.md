@@ -109,3 +109,6 @@ IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレー�
     tp reset
     tp reati
     tp trace on|off          T F / T E 行を LOG(INF) に出す
+
+`tp trace` の出力を見るには、ビルド時に `CONFIG_INPUT_IQS9151_LOG_LEVEL` を 3 (INF) 以上にしておく必要がある。
+`T F` 行では、2本指セッションが終わるフレームで `2f_mode` が 0 になる。
