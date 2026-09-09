@@ -304,8 +304,10 @@ static void iqs9151_cursor_acc_send(struct iqs9151_data *data) {
         return;
     }
 
-    iqs9151_report_rel_event(data->dev, INPUT_REL_X, data->cursor_acc_x, false, K_NO_WAIT);
-    iqs9151_report_rel_event(data->dev, INPUT_REL_Y, data->cursor_acc_y, true, K_NO_WAIT);
+    iqs9151_report_rel_event(data->dev, INPUT_REL_X,
+                             CLAMP(data->cursor_acc_x, INT16_MIN, INT16_MAX), false, K_NO_WAIT);
+    iqs9151_report_rel_event(data->dev, INPUT_REL_Y,
+                             CLAMP(data->cursor_acc_y, INT16_MIN, INT16_MAX), true, K_NO_WAIT);
     data->cursor_acc_x = 0;
     data->cursor_acc_y = 0;
     data->cursor_acc_valid = false;
@@ -353,11 +355,13 @@ static void iqs9151_scroll_acc_send(struct iqs9151_data *data) {
     }
 
     if (have_x) {
-        iqs9151_report_rel_event(data->dev, INPUT_REL_HWHEEL, -data->scroll_acc_x, !have_y,
+        iqs9151_report_rel_event(data->dev, INPUT_REL_HWHEEL,
+                                 CLAMP(-data->scroll_acc_x, INT16_MIN, INT16_MAX), !have_y,
                                  K_NO_WAIT);
     }
     if (have_y) {
-        iqs9151_report_rel_event(data->dev, INPUT_REL_WHEEL, data->scroll_acc_y, true,
+        iqs9151_report_rel_event(data->dev, INPUT_REL_WHEEL,
+                                 CLAMP(data->scroll_acc_y, INT16_MIN, INT16_MAX), true,
                                  K_NO_WAIT);
     }
     data->scroll_acc_x = 0;
@@ -2376,7 +2380,7 @@ static void iqs9151_report_frame_events(struct iqs9151_data *data,
     const bool cursor_frame =
         frame->finger_count == 1U && cursor_moving && !suppress_cursor_tail;
 
-    if (!cursor_frame) {
+    if (frame->finger_count != 1U) {
         iqs9151_cursor_flush(data);
     }
     if (!two_result->scroll_active) {

@@ -1610,6 +1610,40 @@ ZTEST_F(iqs9151_work_cb, test_report_interval_16_coalesces_cursor_until_interval
     assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 3 * (accumulated + 1), true);
 }
 
+/* 送信間隔が 16 で指を置いたまま移動なしのフレームが挟まっても、累積は送られず 16ms 経過後に合算して送られる */
+ZTEST_F(iqs9151_work_cb, test_report_interval_16_non_moving_frame_does_not_flush_cursor) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(2, 3, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(4, 5, 110);
+    const struct iqs9151_test_frame still =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 120, 100, 0, 0);
+    const struct iqs9151_test_frame move_3 = make_cursor_move_frame(1, 1, 130);
+    int64_t first_ms;
+
+    set_driver_param(fixture, "cursor_report_interval_ms", 16);
+
+    first_ms = k_uptime_get();
+    iqs9151_test_process_frame(fixture->ctx, &move_1, first_ms);
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, k_uptime_get());
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &still, k_uptime_get());
+    zassert_equal(fixture->log.count, 2U, "移動なしフレームで送られた(events=%u)",
+                  (unsigned int)fixture->log.count);
+
+    while ((k_uptime_get() - first_ms) < 16) {
+        k_msleep(1);
+    }
+    iqs9151_test_process_frame(fixture->ctx, &move_3, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 5, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 6, true);
+}
+
 /* 送信間隔が 16 のとき、移動 1 フレーム後に指を離すと、離しフレームで残りの累積が送られる */
 ZTEST_F(iqs9151_work_cb, test_report_interval_16_flushes_cursor_on_release) {
     const struct iqs9151_test_frame move_1 = make_cursor_move_frame(2, 3, 100);
