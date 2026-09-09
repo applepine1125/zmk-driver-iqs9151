@@ -186,6 +186,37 @@ void iqs9151_dev_trace_enable(bool enable);
 bool iqs9151_dev_trace_enabled(void);
 
 /*
+ * 試行要約: 指の接触が始まってから、離して 400ms 何も触れないまでを 1 試行として集計する。
+ * end_ms は最後に指を離した時刻。LOG 行は "T S" に続けて下の順で 17 値を出す。
+ */
+struct iqs9151_attempt_summary {
+    uint32_t start_ms;
+    uint32_t end_ms;
+    uint8_t contacts;
+    uint8_t fingers_max;
+    uint32_t down_ms;
+    uint32_t gap_ms;
+    uint32_t move_sum;
+    uint32_t centroid_move;
+    int32_t dist_delta;
+    uint8_t mode2f;
+    uint8_t btn_press_bits;
+    uint8_t btn_release_bits;
+    uint16_t wheel_count;
+    int32_t wheel_sum;
+    uint16_t rel_count;
+    uint16_t drops;
+    uint8_t hold;
+};
+
+typedef void (*iqs9151_summary_cb_t)(const struct iqs9151_attempt_summary *summary,
+                                     void *user_data);
+
+void iqs9151_dev_set_summary_callback(iqs9151_summary_cb_t cb, void *user_data);
+void iqs9151_dev_summary_enable(bool enable);
+bool iqs9151_dev_summary_enabled(void);
+
+/*
  * 永続化(iqs9151_settings.c、CONFIG_INPUT_IQS9151_SETTINGS)。
  * ブロブ: uint16 version(=1), uint16 count, int32 values[count](テーブル順、LE)。
  */

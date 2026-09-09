@@ -47,6 +47,7 @@ void iqs9151_test_process_frame(void *ctx,
                                 const struct iqs9151_test_frame *frame,
                                 int64_t now_ms);
 void iqs9151_test_set_event_hook(iqs9151_test_event_hook_t hook, void *user_data);
+void iqs9151_test_set_summary_hook(iqs9151_summary_cb_t hook, void *user_data);
 
 uint16_t iqs9151_test_hold_button(const void *ctx);
 void iqs9151_test_force_hold_button(void *ctx, uint16_t button);

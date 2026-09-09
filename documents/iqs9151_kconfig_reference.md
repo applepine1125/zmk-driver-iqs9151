@@ -121,9 +121,36 @@ IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレー�
     tp save                  現在の全値を settings に保存する(OK saved / ERR <errno>)
     tp reati
     tp trace on|off          T F / T E 行を LOG(INF) に出す
+    tp summary on|off        試行ごとの T S 行を LOG(INF) に出す(既定 on)
 
-`tp trace` の出力を見るには、ビルド時に `CONFIG_INPUT_IQS9151_LOG_LEVEL` を 3 (INF) 以上にしておく必要がある。
+`tp trace` / `tp summary` の出力を見るには、ビルド時に `CONFIG_INPUT_IQS9151_LOG_LEVEL` を 3 (INF) 以上にしておく必要がある。
 `T F` 行では、2本指セッションが終わるフレームで `2f_mode` が 0 になる。
+
+### 試行要約(T S)
+
+指の接触が始まってから、離して 400ms 何も触れないまでを 1 試行とし、終了時に 1 行出す。400ms 以内の再接触は同じ試行の 2 回目以降の接触として数える。トレース ON/OFF とは独立で、`tp summary off` で止められる。
+
+    T S <start_ms> <end_ms> <contacts> <fingers_max> <down_ms> <gap_ms> <move_sum> <centroid_move> <dist_delta> <mode2f> <btn_press_bits> <btn_release_bits> <wheel_count> <wheel_sum> <rel_count> <drops> <hold>
+
+|値|意味|
+| - | - |
+|`start_ms`|最初の接触フレームの時刻(uptime ms)|
+|`end_ms`|最後に指を離したフレームの時刻(400ms 待ちは含まない)|
+|`contacts`|接触回数(離して 400ms 以内の再接触を数える)|
+|`fingers_max`|試行中の最大指本数|
+|`down_ms`|1 回目の接触の押下時間(接触開始→その離し)|
+|`gap_ms`|1 回目の離しから 2 回目の接触までの ms(2 回目がなければ 0)|
+|`move_sum`|1 本指フレームの `abs(rel_x)+abs(rel_y)` の合計|
+|`centroid_move`|2 本指セッション中の重心移動 `max(abs(dx), abs(dy))` の最大値|
+|`dist_delta`|2 本指セッションの指間距離変化の最終値|
+|`mode2f`|2 本指モード 0=なし 1=スクロール 2=ピンチ(両方あれば後勝ち)|
+|`btn_press_bits`/`btn_release_bits`|送ったボタンの押し/離し。bit n = BTN_n(0..7)|
+|`wheel_count`/`wheel_sum`|REL_WHEEL/HWHEEL の送信件数と値の合計(慣性・ピンチ分も含む)|
+|`rel_count`|REL_X/REL_Y の送信件数|
+|`drops`|`input_report` が 0 以外を返した件数|
+|`hold`|deferred-click(タップ後のボタン保持)が発生したら 1|
+
+要約は `struct iqs9151_attempt_summary`(`iqs9151_params.h`)で、`iqs9151_dev_set_summary_callback(cb, user_data)` で登録したコールバックにも同じ内容が渡る(GATT 通知などに使う)。コールバックは `tp summary off` でも呼ばれる。試行終了から先(慣性の残りなど)に送ったイベントは次の試行に含まれない。
 
 ### 永続化(INPUT_IQS9151_SETTINGS)
 

@@ -10,15 +10,22 @@
 
 #define IQS9151_TEST_CTX_BUF_SIZE 2048
 #define IQS9151_TEST_MAX_EVENTS 32
+#define IQS9151_TEST_MAX_SUMMARIES 4
 
 struct event_log {
     struct iqs9151_test_event events[IQS9151_TEST_MAX_EVENTS];
     size_t count;
 };
 
+struct summary_log {
+    struct iqs9151_attempt_summary items[IQS9151_TEST_MAX_SUMMARIES];
+    size_t count;
+};
+
 struct iqs9151_work_cb_fixture {
-    uint8_t ctx[IQS9151_TEST_CTX_BUF_SIZE];
+    uint8_t ctx[IQS9151_TEST_CTX_BUF_SIZE] __aligned(8);
     struct event_log log;
+    struct summary_log summaries;
 };
 
 int input_report(const struct device *dev,
@@ -41,6 +48,16 @@ static void record_event(const struct iqs9151_test_event *event, void *user_data
     }
 
     log->events[log->count++] = *event;
+}
+
+static void record_summary(const struct iqs9151_attempt_summary *summary, void *user_data) {
+    struct summary_log *log = (struct summary_log *)user_data;
+
+    if (log->count >= IQS9151_TEST_MAX_SUMMARIES) {
+        return;
+    }
+
+    log->items[log->count++] = *summary;
 }
 
 static struct iqs9151_test_frame make_frame(uint8_t finger_count,
@@ -73,6 +90,7 @@ static void *iqs9151_work_cb_setup(void) {
     memset(&fixture, 0, sizeof(fixture));
     iqs9151_test_context_init(fixture.ctx, NULL);
     iqs9151_test_set_event_hook(record_event, &fixture.log);
+    iqs9151_test_set_summary_hook(record_summary, &fixture.summaries);
     return &fixture;
 }
 
@@ -81,9 +99,11 @@ static void iqs9151_work_cb_before(void *fixture_ptr) {
         (struct iqs9151_work_cb_fixture *)fixture_ptr;
 
     memset(&fixture->log, 0, sizeof(fixture->log));
+    memset(&fixture->summaries, 0, sizeof(fixture->summaries));
     iqs9151_test_cancel_pending_work(fixture->ctx);
     iqs9151_test_context_init(fixture->ctx, NULL);
     iqs9151_test_set_event_hook(record_event, &fixture->log);
+    iqs9151_test_set_summary_hook(record_summary, &fixture->summaries);
 }
 
 ZTEST_F(iqs9151_work_cb, test_show_reset_releases_pinch_and_clears_state) {
@@ -1869,6 +1889,193 @@ ZTEST_F(iqs9151_work_cb, test_distance_twice_pinch_start_falls_back_to_pinch_whe
     assert_key_event(&fixture->log.events[0], INPUT_BTN_7, 1);
     assert_rel_event(&fixture->log.events[1], INPUT_REL_WHEEL,
                      (60 * CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10) / (12 * 10), true);
+}
+
+static struct iqs9151_test_frame make_one_finger_down_frame(uint16_t x, uint16_t y) {
+    return make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, x, y, 0, 0);
+}
+
+static void process_now(struct iqs9151_work_cb_fixture *fixture,
+                        const struct iqs9151_test_frame *frame) {
+    iqs9151_test_process_frame(fixture->ctx, frame, k_uptime_get());
+}
+
+/* 要約出力は既定で有効で、無効化と有効化ができる */
+ZTEST(iqs9151_work_cb, test_summary_enabled_by_default_and_can_be_toggled) {
+    zassert_true(iqs9151_dev_summary_enabled(), NULL);
+    iqs9151_dev_summary_enable(false);
+    zassert_false(iqs9151_dev_summary_enabled(), NULL);
+    iqs9151_dev_summary_enable(true);
+    zassert_true(iqs9151_dev_summary_enabled(), NULL);
+}
+
+/* 1 本指で 50ms タップして離してから 400ms 経つと、要約が 1 件出て contacts 1・fingers_max 1・down_ms 50・BTN0 押しビットになる */
+ZTEST_F(iqs9151_work_cb, test_summary_one_finger_tap_reports_single_contact) {
+    const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const int64_t t_down = k_uptime_get();
+    int64_t t_up;
+    const struct iqs9151_attempt_summary *s;
+
+    iqs9151_test_process_frame(fixture->ctx, &down, t_down);
+    k_msleep(50);
+    t_up = k_uptime_get();
+    iqs9151_test_process_frame(fixture->ctx, &up, t_up);
+    k_msleep(300);
+    zassert_equal(fixture->summaries.count, 0U, "離してから 400ms 未満では要約が出ない");
+
+    k_msleep(150);
+
+    zassert_equal(fixture->summaries.count, 1U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    s = &fixture->summaries.items[0];
+    zassert_equal(s->start_ms, (uint32_t)t_down, "start_ms=%u", s->start_ms);
+    zassert_equal(s->end_ms, (uint32_t)t_up, "end_ms=%u", s->end_ms);
+    zassert_equal(s->contacts, 1U, NULL);
+    zassert_equal(s->fingers_max, 1U, NULL);
+    zassert_equal(s->down_ms, (uint32_t)(t_up - t_down), "down_ms=%u", s->down_ms);
+    zassert_equal(s->gap_ms, 0U, NULL);
+    zassert_equal(s->move_sum, 0U, NULL);
+    zassert_equal(s->mode2f, 0U, NULL);
+    zassert_equal(s->btn_press_bits, BIT(0), "press_bits=%02x", s->btn_press_bits);
+    zassert_equal(s->btn_release_bits, BIT(0), "deferred release も含まれる(%02x)",
+                  s->btn_release_bits);
+    zassert_equal(s->wheel_count, 0U, NULL);
+    zassert_equal(s->rel_count, 0U, NULL);
+    zassert_equal(s->drops, 0U, NULL);
+    zassert_equal(s->hold, 1U, "deferred-click が pending になった");
+}
+
+/* タップの 100ms 後に再接触して移動すると、同じ試行として contacts 2・gap_ms 100・hold 1 になる */
+ZTEST_F(iqs9151_work_cb, test_summary_tap_then_recontact_within_gap_counts_second_contact) {
+    const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame move = make_cursor_move_frame(40, 0, 140);
+    int64_t t_up;
+    int64_t t_down2;
+    const struct iqs9151_attempt_summary *s;
+
+    process_now(fixture, &down);
+    k_msleep(30);
+    t_up = k_uptime_get();
+    iqs9151_test_process_frame(fixture->ctx, &up, t_up);
+    k_msleep(100);
+    t_down2 = k_uptime_get();
+    iqs9151_test_process_frame(fixture->ctx, &down, t_down2);
+    k_msleep(10);
+    process_now(fixture, &move);
+    k_msleep(10);
+    process_now(fixture, &up);
+    k_msleep(450);
+
+    zassert_equal(fixture->summaries.count, 1U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    s = &fixture->summaries.items[0];
+    zassert_equal(s->contacts, 2U, NULL);
+    zassert_equal(s->gap_ms, (uint32_t)(t_down2 - t_up), "gap_ms=%u", s->gap_ms);
+    zassert_equal(s->hold, 1U, NULL);
+    zassert_equal(s->move_sum, 40U, "move_sum=%u", s->move_sum);
+    zassert_equal(s->rel_count, 2U, "rel_count=%u", s->rel_count);
+    zassert_equal(s->btn_press_bits, BIT(0), NULL);
+    zassert_equal(s->btn_release_bits, BIT(0), NULL);
+}
+
+/* 2 本指でスクロールして離すと、mode2f 1・wheel_count 1 以上・centroid_move 60・fingers_max 2 になる */
+ZTEST_F(iqs9151_work_cb, test_summary_two_finger_scroll_reports_scroll_mode_and_wheel) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 200, 100);
+    const struct iqs9151_test_frame two_scroll = make_two_finger_xy_frame(160, 100, 260, 100);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_attempt_summary *s;
+
+    process_now(fixture, &two_start);
+    k_msleep(10);
+    process_now(fixture, &two_scroll);
+    k_msleep(10);
+    process_now(fixture, &release);
+    k_msleep(450);
+
+    zassert_equal(fixture->summaries.count, 1U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    s = &fixture->summaries.items[0];
+    zassert_equal(s->contacts, 1U, NULL);
+    zassert_equal(s->fingers_max, 2U, NULL);
+    zassert_equal(s->mode2f, 1U, "mode2f=%u", s->mode2f);
+    zassert_true(s->wheel_count >= 1U, "wheel_count=%u", s->wheel_count);
+    zassert_equal(s->centroid_move, 60U, "centroid_move=%u", s->centroid_move);
+    zassert_equal(s->dist_delta, 0, "dist_delta=%d", s->dist_delta);
+    zassert_equal(s->btn_press_bits, 0U, NULL);
+    zassert_equal(s->hold, 0U, NULL);
+}
+
+/* 2 本指ピンチをすると、mode2f 2・dist_delta -160・BTN7 の押し/離しビットになる */
+ZTEST_F(iqs9151_work_cb, test_summary_two_finger_pinch_reports_pinch_mode_and_distance) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 500, 100);
+    const struct iqs9151_test_frame pinch = make_two_finger_xy_frame(180, 100, 420, 100);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_attempt_summary *s;
+
+    process_now(fixture, &two_start);
+    k_msleep(10);
+    process_now(fixture, &pinch);
+    k_msleep(10);
+    process_now(fixture, &release);
+    k_msleep(450);
+
+    zassert_equal(fixture->summaries.count, 1U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    s = &fixture->summaries.items[0];
+    zassert_equal(s->mode2f, 2U, "mode2f=%u", s->mode2f);
+    zassert_equal(s->dist_delta, -160, "dist_delta=%d", s->dist_delta);
+    zassert_equal(s->btn_press_bits, BIT(7), "press_bits=%02x", s->btn_press_bits);
+    zassert_equal(s->btn_release_bits, BIT(7), "release_bits=%02x", s->btn_release_bits);
+    zassert_true(s->wheel_count >= 1U, "wheel_count=%u", s->wheel_count);
+}
+
+/* 離してから 200ms 後の再接触は同じ試行になり、その後 400ms 超えてからの接触は別の試行として 2 件目の要約になる */
+ZTEST_F(iqs9151_work_cb, test_summary_recontact_within_400ms_is_same_attempt_and_after_is_new) {
+    const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    process_now(fixture, &down);
+    k_msleep(20);
+    process_now(fixture, &up);
+    k_msleep(200);
+    process_now(fixture, &down);
+    k_msleep(20);
+    process_now(fixture, &up);
+    k_msleep(450);
+
+    zassert_equal(fixture->summaries.count, 1U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    zassert_equal(fixture->summaries.items[0].contacts, 2U, NULL);
+
+    process_now(fixture, &down);
+    k_msleep(20);
+    process_now(fixture, &up);
+    k_msleep(450);
+
+    zassert_equal(fixture->summaries.count, 2U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    zassert_equal(fixture->summaries.items[1].contacts, 1U, NULL);
+    zassert_true(fixture->summaries.items[1].start_ms > fixture->summaries.items[0].end_ms,
+                 "2 件目は 1 件目の終了より後に始まる");
+}
+
+/* SHOW_RESET が来ると、進行中の試行は破棄され要約は出ない */
+ZTEST_F(iqs9151_work_cb, test_summary_show_reset_discards_attempt) {
+    const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame show_reset =
+        make_frame(0U, 0U, 0, 0, IQS9151_INFO_SHOW_RESET, 0, 0, 0, 0);
+
+    process_now(fixture, &down);
+    k_msleep(20);
+    process_now(fixture, &up);
+    process_now(fixture, &show_reset);
+    k_msleep(450);
+
+    zassert_equal(fixture->summaries.count, 0U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
 }
 
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);

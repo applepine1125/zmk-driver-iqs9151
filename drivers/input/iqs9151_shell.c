@@ -163,6 +163,20 @@ static int cmd_tp_trace(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
+static int cmd_tp_summary(const struct shell *sh, size_t argc, char **argv) {
+    ARG_UNUSED(argc);
+    if (strcmp(argv[1], "on") == 0) {
+        iqs9151_dev_summary_enable(true);
+    } else if (strcmp(argv[1], "off") == 0) {
+        iqs9151_dev_summary_enable(false);
+    } else {
+        shell_print(sh, "ERR expected on|off");
+        return -EINVAL;
+    }
+    shell_print(sh, "OK summary=%s", argv[1]);
+    return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
     sub_tp,
     SHELL_CMD_ARG(info, NULL, "Show side and uptime", cmd_tp_info, 1, 0),
@@ -174,6 +188,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(save, NULL, "Save current params to settings", cmd_tp_save, 1, 0),
     SHELL_CMD_ARG(reati, NULL, "Request Re-ATI on next frame", cmd_tp_reati, 1, 0),
     SHELL_CMD_ARG(trace, NULL, "trace on|off", cmd_tp_trace, 2, 0),
+    SHELL_CMD_ARG(summary, NULL, "summary on|off (T S line per attempt)", cmd_tp_summary, 2, 0),
     SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(tp, &sub_tp, "IQS9151 trackpad tuning", NULL);

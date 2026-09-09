@@ -15,7 +15,7 @@
 #define MEM_STORE_VALUE_MAX 512
 
 struct iqs9151_settings_fixture {
-    uint8_t ctx[IQS9151_TEST_CTX_BUF_SIZE];
+    uint8_t ctx[IQS9151_TEST_CTX_BUF_SIZE] __aligned(8);
 };
 
 struct mem_store {

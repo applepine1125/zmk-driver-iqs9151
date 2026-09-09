@@ -25,6 +25,11 @@
 LOG_MODULE_REGISTER(iqs9151, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 
 static bool iqs9151_trace_enabled;
+static bool iqs9151_summary_enabled = true;
+static struct {
+    iqs9151_summary_cb_t cb;
+    void *user_data;
+} iqs9151_summary_cb;
 
 void iqs9151_dev_trace_enable(bool enable) {
     iqs9151_trace_enabled = enable;
@@ -32,6 +37,19 @@ void iqs9151_dev_trace_enable(bool enable) {
 
 bool iqs9151_dev_trace_enabled(void) {
     return iqs9151_trace_enabled;
+}
+
+void iqs9151_dev_summary_enable(bool enable) {
+    iqs9151_summary_enabled = enable;
+}
+
+bool iqs9151_dev_summary_enabled(void) {
+    return iqs9151_summary_enabled;
+}
+
+void iqs9151_dev_set_summary_callback(iqs9151_summary_cb_t cb, void *user_data) {
+    iqs9151_summary_cb.cb = cb;
+    iqs9151_summary_cb.user_data = user_data;
 }
 
 #define DT_DRV_COMPAT azoteq_iqs9151
@@ -68,6 +86,8 @@ bool iqs9151_dev_trace_enabled(void) {
 #define IQS9151_FINGER_HISTORY_SIZE 5
 #define TWO_FINGER_PINCH_WHEEL_DIV 12
 #define TWO_FINGER_PINCH_WHEEL_GAIN_DEN 10
+#define IQS9151_SUMMARY_IDLE_MS 400
+#define IQS9151_SUMMARY_BTN_COUNT 8
 
 struct iqs9151_config {
     struct i2c_dt_spec i2c;
@@ -170,6 +190,13 @@ struct iqs9151_motion_history {
     uint8_t head;
     uint8_t count;
 };
+struct iqs9151_attempt_state {
+    bool active;
+    bool first_contact_down;
+    int64_t first_down_ms;
+    int64_t release_ms;
+    struct iqs9151_attempt_summary summary;
+};
 
 struct iqs9151_data {
     const struct device *dev;
@@ -182,6 +209,8 @@ struct iqs9151_data {
     struct k_work_delayable inertia_cursor_work;
     struct k_work_delayable cursor_flush_work;
     struct k_work_delayable scroll_flush_work;
+    struct k_work_delayable summary_work;
+    struct iqs9151_attempt_state attempt;
     int32_t cursor_acc_x;
     int32_t cursor_acc_y;
     bool cursor_acc_valid;
@@ -245,57 +274,66 @@ static struct {
 } iqs9151_test_hook;
 #endif
 
-static int iqs9151_report_key_event(const struct device *dev, uint16_t code,
+static void iqs9151_summary_note_key(struct iqs9151_data *data, uint16_t code, bool pressed,
+                                     int ret);
+static void iqs9151_summary_note_rel(struct iqs9151_data *data, uint16_t code, int32_t value,
+                                     int ret);
+
+static int iqs9151_report_key_event(struct iqs9151_data *data, uint16_t code,
                                     int32_t value, bool sync, k_timeout_t timeout) {
+    int ret = 0;
+
 #ifdef CONFIG_INPUT_IQS9151_TEST
     if (iqs9151_test_hook.hook != NULL) {
         const struct iqs9151_test_event event = {
             .type = IQS9151_TEST_EVENT_KEY,
-            .dev = dev,
+            .dev = data->dev,
             .code = code,
             .value = !!value,
             .sync = sync,
             .timeout = timeout,
         };
         iqs9151_test_hook.hook(&event, iqs9151_test_hook.user_data);
-        if (iqs9151_trace_enabled) {
-            LOG_INF("T E %u K %u %d %d", (uint32_t)k_uptime_get(), code, (int)!!value, 0);
-        }
-        return 0;
+    } else {
+        ret = input_report_key(data->dev, code, value, sync, timeout);
     }
+#else
+    ret = input_report_key(data->dev, code, value, sync, timeout);
 #endif
-    const int ret = input_report_key(dev, code, value, sync, timeout);
 
     if (iqs9151_trace_enabled) {
         LOG_INF("T E %u K %u %d %d", (uint32_t)k_uptime_get(), code, (int)!!value, ret);
     }
+    iqs9151_summary_note_key(data, code, value != 0, ret);
     return ret;
 }
 
-static int iqs9151_report_rel_event(const struct device *dev, uint16_t code,
+static int iqs9151_report_rel_event(struct iqs9151_data *data, uint16_t code,
                                     int32_t value, bool sync, k_timeout_t timeout) {
+    int ret = 0;
+
 #ifdef CONFIG_INPUT_IQS9151_TEST
     if (iqs9151_test_hook.hook != NULL) {
         const struct iqs9151_test_event event = {
             .type = IQS9151_TEST_EVENT_REL,
-            .dev = dev,
+            .dev = data->dev,
             .code = code,
             .value = value,
             .sync = sync,
             .timeout = timeout,
         };
         iqs9151_test_hook.hook(&event, iqs9151_test_hook.user_data);
-        if (iqs9151_trace_enabled) {
-            LOG_INF("T E %u R %u %d %d", (uint32_t)k_uptime_get(), code, value, 0);
-        }
-        return 0;
+    } else {
+        ret = input_report_rel(data->dev, code, value, sync, timeout);
     }
+#else
+    ret = input_report_rel(data->dev, code, value, sync, timeout);
 #endif
-    const int ret = input_report_rel(dev, code, value, sync, timeout);
 
     if (iqs9151_trace_enabled) {
         LOG_INF("T E %u R %u %d %d", (uint32_t)k_uptime_get(), code, value, ret);
     }
+    iqs9151_summary_note_rel(data, code, value, ret);
     return ret;
 }
 
@@ -304,9 +342,9 @@ static void iqs9151_cursor_acc_send(struct iqs9151_data *data) {
         return;
     }
 
-    iqs9151_report_rel_event(data->dev, INPUT_REL_X,
+    iqs9151_report_rel_event(data, INPUT_REL_X,
                              CLAMP(data->cursor_acc_x, INT16_MIN, INT16_MAX), false, K_NO_WAIT);
-    iqs9151_report_rel_event(data->dev, INPUT_REL_Y,
+    iqs9151_report_rel_event(data, INPUT_REL_Y,
                              CLAMP(data->cursor_acc_y, INT16_MIN, INT16_MAX), true, K_NO_WAIT);
     data->cursor_acc_x = 0;
     data->cursor_acc_y = 0;
@@ -355,12 +393,12 @@ static void iqs9151_scroll_acc_send(struct iqs9151_data *data) {
     }
 
     if (have_x) {
-        iqs9151_report_rel_event(data->dev, INPUT_REL_HWHEEL,
+        iqs9151_report_rel_event(data, INPUT_REL_HWHEEL,
                                  CLAMP(-data->scroll_acc_x, INT16_MIN, INT16_MAX), !have_y,
                                  K_NO_WAIT);
     }
     if (have_y) {
-        iqs9151_report_rel_event(data->dev, INPUT_REL_WHEEL,
+        iqs9151_report_rel_event(data, INPUT_REL_WHEEL,
                                  CLAMP(data->scroll_acc_y, INT16_MIN, INT16_MAX), true,
                                  K_NO_WAIT);
     }
@@ -878,6 +916,160 @@ static int32_t iqs9151_abs32(int32_t value) {
     return (value < 0) ? -value : value;
 }
 
+static void iqs9151_summary_log_cb(const struct iqs9151_attempt_summary *s, void *user_data) {
+    ARG_UNUSED(user_data);
+    LOG_INF("T S %u %u %u %u %u %u %u %u %d %u %u %u %u %d %u %u %u", s->start_ms, s->end_ms,
+            s->contacts, s->fingers_max, s->down_ms, s->gap_ms, s->move_sum, s->centroid_move,
+            s->dist_delta, s->mode2f, s->btn_press_bits, s->btn_release_bits, s->wheel_count,
+            s->wheel_sum, s->rel_count, s->drops, s->hold);
+}
+
+static void iqs9151_summary_emit(struct iqs9151_data *data) {
+    struct iqs9151_attempt_state *attempt = &data->attempt;
+
+    if (!attempt->active) {
+        return;
+    }
+    attempt->summary.end_ms = (uint32_t)attempt->release_ms;
+    if (iqs9151_summary_enabled) {
+        iqs9151_summary_log_cb(&attempt->summary, NULL);
+    }
+    if (iqs9151_summary_cb.cb != NULL) {
+        iqs9151_summary_cb.cb(&attempt->summary, iqs9151_summary_cb.user_data);
+    }
+    memset(attempt, 0, sizeof(*attempt));
+}
+
+static void iqs9151_summary_work_cb(struct k_work *work) {
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct iqs9151_data *data = CONTAINER_OF(dwork, struct iqs9151_data, summary_work);
+
+    iqs9151_summary_emit(data);
+}
+
+static void iqs9151_summary_reset(struct iqs9151_data *data) {
+    (void)k_work_cancel_delayable(&data->summary_work);
+    memset(&data->attempt, 0, sizeof(data->attempt));
+}
+
+static void iqs9151_summary_note_key(struct iqs9151_data *data, uint16_t code, bool pressed,
+                                     int ret) {
+    struct iqs9151_attempt_summary *s = &data->attempt.summary;
+
+    if (!data->attempt.active) {
+        return;
+    }
+    if (code >= INPUT_BTN_0 && code < INPUT_BTN_0 + IQS9151_SUMMARY_BTN_COUNT) {
+        const uint8_t bit = (uint8_t)BIT(code - INPUT_BTN_0);
+
+        if (pressed) {
+            s->btn_press_bits |= bit;
+        } else {
+            s->btn_release_bits |= bit;
+        }
+    }
+    if (ret != 0) {
+        s->drops++;
+    }
+}
+
+static void iqs9151_summary_note_rel(struct iqs9151_data *data, uint16_t code, int32_t value,
+                                     int ret) {
+    struct iqs9151_attempt_summary *s = &data->attempt.summary;
+
+    if (!data->attempt.active) {
+        return;
+    }
+    if (code == INPUT_REL_WHEEL || code == INPUT_REL_HWHEEL) {
+        s->wheel_count++;
+        s->wheel_sum += value;
+    } else if (code == INPUT_REL_X || code == INPUT_REL_Y) {
+        s->rel_count++;
+    }
+    if (ret != 0) {
+        s->drops++;
+    }
+}
+
+/*
+ * 2 本指の累積は離しフレームの更新で消えるので、更新前(前フレーム時点)と更新後の両方で読む。
+ */
+static void iqs9151_summary_sample_two_finger(struct iqs9151_data *data) {
+    const struct iqs9151_two_finger_state *tf = &data->two_finger;
+    struct iqs9151_attempt_summary *s = &data->attempt.summary;
+    uint32_t centroid_move;
+
+    if (!data->attempt.active || !tf->active) {
+        return;
+    }
+    centroid_move =
+        (uint32_t)MAX(iqs9151_abs32(tf->centroid_dx), iqs9151_abs32(tf->centroid_dy));
+    if (centroid_move > s->centroid_move) {
+        s->centroid_move = centroid_move;
+    }
+    s->dist_delta = tf->distance_delta;
+    if (tf->mode != IQS9151_2F_MODE_NONE) {
+        s->mode2f = (uint8_t)tf->mode;
+    }
+}
+
+static void iqs9151_summary_begin_frame(struct iqs9151_data *data,
+                                        const struct iqs9151_frame *frame,
+                                        uint8_t prev_finger_count, int64_t now_ms) {
+    struct iqs9151_attempt_state *attempt = &data->attempt;
+
+    if (prev_finger_count == 0U && frame->finger_count != 0U) {
+        if (!attempt->active) {
+            memset(attempt, 0, sizeof(*attempt));
+            attempt->active = true;
+            attempt->first_contact_down = true;
+            attempt->first_down_ms = now_ms;
+            attempt->summary.start_ms = (uint32_t)now_ms;
+            attempt->summary.contacts = 1U;
+        } else {
+            (void)k_work_cancel_delayable(&data->summary_work);
+            if (attempt->summary.contacts < UINT8_MAX) {
+                attempt->summary.contacts++;
+            }
+            if (attempt->summary.contacts == 2U) {
+                attempt->summary.gap_ms = (uint32_t)(now_ms - attempt->release_ms);
+            }
+        }
+    }
+    iqs9151_summary_sample_two_finger(data);
+}
+
+static void iqs9151_summary_end_frame(struct iqs9151_data *data,
+                                      const struct iqs9151_frame *frame,
+                                      uint8_t prev_finger_count, int64_t now_ms) {
+    struct iqs9151_attempt_state *attempt = &data->attempt;
+    struct iqs9151_attempt_summary *s = &attempt->summary;
+
+    if (!attempt->active) {
+        return;
+    }
+    if (frame->finger_count > s->fingers_max) {
+        s->fingers_max = frame->finger_count;
+    }
+    if (frame->finger_count == 1U) {
+        s->move_sum += (uint32_t)(iqs9151_abs32(frame->rel_x) + iqs9151_abs32(frame->rel_y));
+    }
+    iqs9151_summary_sample_two_finger(data);
+    if (data->one_finger_click_pending || data->two_finger_click_pending ||
+        data->three_finger_click_pending) {
+        s->hold = 1U;
+    }
+    if (frame->finger_count == 0U && prev_finger_count != 0U) {
+        if (attempt->first_contact_down) {
+            attempt->first_contact_down = false;
+            s->down_ms = (uint32_t)(now_ms - attempt->first_down_ms);
+        }
+        attempt->release_ms = now_ms;
+        (void)k_work_reschedule(&data->summary_work, K_MSEC(IQS9151_SUMMARY_IDLE_MS));
+    }
+}
+
+
 static void iqs9151_ema_reset(int32_t *ema_x_fp, int32_t *ema_y_fp) {
     *ema_x_fp = 0;
     *ema_y_fp = 0;
@@ -1034,7 +1226,7 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
     }
 
     iqs9151_cursor_flush(data);
-    iqs9151_report_key_event(dev, data->hold_button, false, true, K_FOREVER);
+    iqs9151_report_key_event(data, data->hold_button, false, true, K_FOREVER);
     data->hold_button = 0U;
 }
 
@@ -1119,8 +1311,8 @@ static bool iqs9151_emit_click(struct iqs9151_data *data,
     }
 
     iqs9151_cursor_flush(data);
-    iqs9151_report_key_event(dev, button, true, true, K_FOREVER);
-    iqs9151_report_key_event(dev, button, false, true, K_FOREVER);
+    iqs9151_report_key_event(data, button, true, true, K_FOREVER);
+    iqs9151_report_key_event(data, button, false, true, K_FOREVER);
     return true;
 }
 
@@ -1132,7 +1324,7 @@ static bool iqs9151_emit_hold_press(struct iqs9151_data *data,
     }
 
     iqs9151_cursor_flush(data);
-    iqs9151_report_key_event(dev, button, true, true, K_FOREVER);
+    iqs9151_report_key_event(data, button, true, true, K_FOREVER);
     data->hold_button = button;
     return true;
 }
@@ -1776,16 +1968,16 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
                 iqs9151_abs32(data->three_dx) >= iqs9151_abs32(data->three_dy)) {
                 const uint16_t key = (data->three_dx < 0) ? INPUT_BTN_4 : INPUT_BTN_3;
                 iqs9151_cursor_flush(data);
-                iqs9151_report_key_event(dev, key, true, true, K_FOREVER);
-                iqs9151_report_key_event(dev, key, false, true, K_FOREVER);
+                iqs9151_report_key_event(data, key, true, true, K_FOREVER);
+                iqs9151_report_key_event(data, key, false, true, K_FOREVER);
                 data->three_swipe_sent = true;
                 return true;
             } else if (iqs9151_abs32(data->three_dy) >= p->f3_swipe_threshold &&
                        iqs9151_abs32(data->three_dy) > iqs9151_abs32(data->three_dx)) {
                 const uint16_t key = (data->three_dy < 0) ? INPUT_BTN_5 : INPUT_BTN_6;
                 iqs9151_cursor_flush(data);
-                iqs9151_report_key_event(dev, key, true, true, K_FOREVER);
-                iqs9151_report_key_event(dev, key, false, true, K_FOREVER);
+                iqs9151_report_key_event(data, key, true, true, K_FOREVER);
+                iqs9151_report_key_event(data, key, false, true, K_FOREVER);
                 data->three_swipe_sent = true;
                 return true;
             }
@@ -1910,7 +2102,7 @@ static void iqs9151_reset_gesture_states(struct iqs9151_data *data,
                                          bool release_hold) {
     if (data->two_finger.active && data->two_finger.mode == IQS9151_2F_MODE_PINCH) {
         iqs9151_cursor_flush(data);
-        iqs9151_report_key_event(dev, INPUT_BTN_7, false, true, K_FOREVER);
+        iqs9151_report_key_event(data, INPUT_BTN_7, false, true, K_FOREVER);
     }
     if (release_hold) {
         iqs9151_release_hold(data, dev);
@@ -2010,7 +2202,6 @@ static void iqs9151_inertia_scroll_work_cb(struct k_work *work) {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
     struct iqs9151_data *data =
         CONTAINER_OF(dwork, struct iqs9151_data, inertia_scroll_work);
-    const struct device *dev = data->dev;
     int32_t out_x;
     int32_t out_y;
 
@@ -2031,10 +2222,10 @@ static void iqs9151_inertia_scroll_work_cb(struct k_work *work) {
     const bool have_x = out_x != 0;
     const bool have_y = out_y != 0;
     if (have_x) {
-        iqs9151_report_rel_event(dev, INPUT_REL_HWHEEL, (int16_t)(-out_x), !have_y, K_NO_WAIT);
+        iqs9151_report_rel_event(data, INPUT_REL_HWHEEL, (int16_t)(-out_x), !have_y, K_NO_WAIT);
     }
     if (have_y) {
-        iqs9151_report_rel_event(dev, INPUT_REL_WHEEL, (int16_t)out_y, true, K_NO_WAIT);
+        iqs9151_report_rel_event(data, INPUT_REL_WHEEL, (int16_t)out_y, true, K_NO_WAIT);
     }
 
     if (active) {
@@ -2067,7 +2258,6 @@ static void iqs9151_inertia_cursor_work_cb(struct k_work *work) {
     struct k_work_delayable *dwork = k_work_delayable_from_work(work);
     struct iqs9151_data *data =
         CONTAINER_OF(dwork, struct iqs9151_data, inertia_cursor_work);
-    const struct device *dev = data->dev;
     int32_t out_x;
     int32_t out_y;
 
@@ -2088,10 +2278,10 @@ static void iqs9151_inertia_cursor_work_cb(struct k_work *work) {
     const bool have_x = out_x != 0;
     const bool have_y = out_y != 0;
     if (have_x) {
-        iqs9151_report_rel_event(dev, INPUT_REL_X, (int16_t)out_x, !have_y, K_NO_WAIT);
+        iqs9151_report_rel_event(data, INPUT_REL_X, (int16_t)out_x, !have_y, K_NO_WAIT);
     }
     if (have_y) {
-        iqs9151_report_rel_event(dev, INPUT_REL_Y, (int16_t)out_y, true, K_NO_WAIT);
+        iqs9151_report_rel_event(data, INPUT_REL_Y, (int16_t)out_y, true, K_NO_WAIT);
     }
 
     if (active) {
@@ -2170,6 +2360,7 @@ static bool iqs9151_handle_show_reset(struct iqs9151_data *data,
 
     LOG_WRN("SHOW_RESET detected: info=0x%04x", frame->info_flags);
     iqs9151_reset_gesture_states(data, dev, true);
+    iqs9151_summary_reset(data);
     iqs9151_report_acc_reset(data);
     iqs9151_inertia_cancel(&data->inertia_scroll, &data->inertia_scroll_work);
     iqs9151_inertia_cancel(&data->inertia_cursor, &data->inertia_cursor_work);
@@ -2405,7 +2596,6 @@ static void iqs9151_report_frame_events(struct iqs9151_data *data,
                                         const struct iqs9151_two_finger_result *two_result,
                                         bool cursor_moving,
                                         bool suppress_cursor_tail) {
-    const struct device *dev = data->dev;
     const bool cursor_frame =
         frame->finger_count == 1U && cursor_moving && !suppress_cursor_tail;
 
@@ -2417,15 +2607,15 @@ static void iqs9151_report_frame_events(struct iqs9151_data *data,
     }
 
     if (two_result->pinch_started) {
-        iqs9151_report_key_event(dev, INPUT_BTN_7, true, true, K_FOREVER);
+        iqs9151_report_key_event(data, INPUT_BTN_7, true, true, K_FOREVER);
     }
     if (two_result->pinch_ended) {
-        iqs9151_report_key_event(dev, INPUT_BTN_7, false, true, K_FOREVER);
+        iqs9151_report_key_event(data, INPUT_BTN_7, false, true, K_FOREVER);
     }
 
     if (two_result->pinch_active) {
         if (two_result->pinch_wheel != 0) {
-            iqs9151_report_rel_event(dev, INPUT_REL_WHEEL, two_result->pinch_wheel, true, K_NO_WAIT);
+            iqs9151_report_rel_event(data, INPUT_REL_WHEEL, two_result->pinch_wheel, true, K_NO_WAIT);
         }
     } else if (two_result->scroll_active) {
         iqs9151_report_scroll(data, two_result->scroll_x, two_result->scroll_y);
@@ -2450,6 +2640,7 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
         return;
     }
 
+    iqs9151_summary_begin_frame(data, frame, prev_frame.finger_count, now_ms);
     released_from_hold =
         iqs9151_update_gesture_sessions(data, frame, &prev_frame, &two_result);
     suppress_cursor_tail =
@@ -2472,6 +2663,7 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
 
     iqs9151_report_frame_events(data, frame, &two_result, cursor_moving,
                                 suppress_cursor_tail);
+    iqs9151_summary_end_frame(data, frame, prev_frame.finger_count, now_ms);
 
     if (iqs9151_trace_enabled) {
         const uint32_t pending_bits = (data->one_finger_click_pending ? BIT(0) : 0U) |
@@ -2919,6 +3111,7 @@ static int iqs9151_init(const struct device *dev) {
     k_work_init_delayable(&data->inertia_cursor_work, iqs9151_inertia_cursor_work_cb);
     k_work_init_delayable(&data->cursor_flush_work, iqs9151_cursor_flush_work_cb);
     k_work_init_delayable(&data->scroll_flush_work, iqs9151_scroll_flush_work_cb);
+    k_work_init_delayable(&data->summary_work, iqs9151_summary_work_cb);
     iqs9151_report_acc_reset(data);
     iqs9151_inertia_state_reset(&data->inertia_scroll);
     iqs9151_inertia_state_reset(&data->inertia_cursor);
@@ -2983,6 +3176,7 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     k_work_init_delayable(&data->inertia_cursor_work, iqs9151_inertia_cursor_work_cb);
     k_work_init_delayable(&data->cursor_flush_work, iqs9151_cursor_flush_work_cb);
     k_work_init_delayable(&data->scroll_flush_work, iqs9151_scroll_flush_work_cb);
+    k_work_init_delayable(&data->summary_work, iqs9151_summary_work_cb);
     iqs9151_report_acc_reset(data);
     iqs9151_inertia_state_reset(&data->inertia_scroll);
     iqs9151_inertia_state_reset(&data->inertia_cursor);
@@ -3014,6 +3208,7 @@ void iqs9151_test_cancel_pending_work(void *ctx) {
     (void)k_work_cancel_delayable(&data->inertia_cursor_work);
     (void)k_work_cancel_delayable(&data->cursor_flush_work);
     (void)k_work_cancel_delayable(&data->scroll_flush_work);
+    (void)k_work_cancel_delayable(&data->summary_work);
     (void)k_work_cancel(&data->work);
 }
 
@@ -3039,6 +3234,10 @@ void iqs9151_test_process_frame(void *ctx,
 void iqs9151_test_set_event_hook(iqs9151_test_event_hook_t hook, void *user_data) {
     iqs9151_test_hook.hook = hook;
     iqs9151_test_hook.user_data = user_data;
+}
+
+void iqs9151_test_set_summary_hook(iqs9151_summary_cb_t hook, void *user_data) {
+    iqs9151_dev_set_summary_callback(hook, user_data);
 }
 
 uint16_t iqs9151_test_hold_button(const void *ctx) {
