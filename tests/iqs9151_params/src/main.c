@@ -7,9 +7,9 @@
 
 ZTEST_SUITE(iqs9151_params, NULL, NULL, NULL, NULL, NULL);
 
-/* 定義テーブルは51個で、IC系17個が先頭にあるとき、種別が位置と一致する */
-ZTEST(iqs9151_params, test_table_has_51_params_ic_first) {
-    zassert_equal(iqs9151_param_count(), 51U, "count=%u",
+/* 定義テーブルは53個で、IC系17個が先頭にあるとき、種別が位置と一致する */
+ZTEST(iqs9151_params, test_table_has_53_params_ic_first) {
+    zassert_equal(iqs9151_param_count(), 53U, "count=%u",
                   (unsigned int)iqs9151_param_count());
     for (size_t i = 0; i < iqs9151_param_count(); i++) {
         const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
@@ -42,6 +42,21 @@ ZTEST(iqs9151_params, test_find_by_name_returns_null_for_unknown) {
     zassert_equal(def->max, 1000, NULL);
     zassert_equal(def->def, 120, NULL);
     zassert_is_null(iqs9151_param_find("no_such_param"), NULL);
+}
+
+/* 送信間隔パラメータは driver 種別で、範囲 0〜100・既定値 0 になる */
+ZTEST(iqs9151_params, test_report_interval_params_are_driver_kind_with_range_0_100) {
+    const char *const names[] = {"cursor_report_interval_ms", "scroll_report_interval_ms"};
+
+    for (size_t i = 0; i < ARRAY_SIZE(names); i++) {
+        const struct iqs9151_param_def *def = iqs9151_param_find(names[i]);
+
+        zassert_not_null(def, "%s が見つからない", names[i]);
+        zassert_equal(def->kind, IQS9151_PARAM_DRIVER, "%s", names[i]);
+        zassert_equal(def->min, 0, "%s", names[i]);
+        zassert_equal(def->max, 100, "%s", names[i]);
+        zassert_equal(def->def, 0, "%s", names[i]);
+    }
 }
 
 /* 範囲内の値をsetするとgetで返り、範囲外はERANGEになる */

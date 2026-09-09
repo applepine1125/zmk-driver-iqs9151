@@ -138,7 +138,11 @@ enum iqs9151_param_kind {
     X(scroll_inertia_min_samples, "scroll_inertia_min_samples",                                 \
       CONFIG_INPUT_IQS9151_SCROLL_INERTIA_MIN_SAMPLES, 1, 12, IQS9151_PARAM_DRIVER, 0)          \
     X(scroll_inertia_min_avg_speed, "scroll_inertia_min_avg_speed",                             \
-      CONFIG_INPUT_IQS9151_SCROLL_INERTIA_MIN_AVG_SPEED, 1, 500, IQS9151_PARAM_DRIVER, 0)
+      CONFIG_INPUT_IQS9151_SCROLL_INERTIA_MIN_AVG_SPEED, 1, 500, IQS9151_PARAM_DRIVER, 0)       \
+    X(cursor_report_interval_ms, "cursor_report_interval_ms",                                   \
+      CONFIG_INPUT_IQS9151_CURSOR_REPORT_INTERVAL_MS, 0, 100, IQS9151_PARAM_DRIVER, 0)          \
+    X(scroll_report_interval_ms, "scroll_report_interval_ms",                                   \
+      CONFIG_INPUT_IQS9151_SCROLL_REPORT_INTERVAL_MS, 0, 100, IQS9151_PARAM_DRIVER, 0)
 
 #define IQS9151_PARAM_IC_COUNT 17
 
