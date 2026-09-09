@@ -2754,7 +2754,7 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
         };
 
         if (iqs9151_trace_enabled) {
-            char buf[64];
+            char buf[128];
 
             (void)iqs9151_frame_format(&finfo, buf, sizeof(buf));
             LOG_INF("%s", buf);
