@@ -180,6 +180,16 @@ struct iqs9151_data {
     struct k_work_delayable three_finger_click_work;
     struct k_work_delayable inertia_scroll_work;
     struct k_work_delayable inertia_cursor_work;
+    struct k_work_delayable cursor_flush_work;
+    struct k_work_delayable scroll_flush_work;
+    int32_t cursor_acc_x;
+    int32_t cursor_acc_y;
+    bool cursor_acc_valid;
+    int64_t last_cursor_report_ms;
+    int32_t scroll_acc_x;
+    int32_t scroll_acc_y;
+    bool scroll_acc_valid;
+    int64_t last_scroll_report_ms;
     struct iqs9151_inertia_state inertia_scroll;
     struct iqs9151_inertia_state inertia_cursor;
     int32_t scroll_ema_x_fp;
@@ -287,6 +297,123 @@ static int iqs9151_report_rel_event(const struct device *dev, uint16_t code,
         LOG_INF("T E %u R %u %d %d", (uint32_t)k_uptime_get(), code, value, ret);
     }
     return ret;
+}
+
+static void iqs9151_cursor_acc_send(struct iqs9151_data *data) {
+    if (!data->cursor_acc_valid) {
+        return;
+    }
+
+    iqs9151_report_rel_event(data->dev, INPUT_REL_X, data->cursor_acc_x, false, K_NO_WAIT);
+    iqs9151_report_rel_event(data->dev, INPUT_REL_Y, data->cursor_acc_y, true, K_NO_WAIT);
+    data->cursor_acc_x = 0;
+    data->cursor_acc_y = 0;
+    data->cursor_acc_valid = false;
+    data->last_cursor_report_ms = k_uptime_get();
+}
+
+static void iqs9151_cursor_flush(struct iqs9151_data *data) {
+    if (!data->cursor_acc_valid) {
+        return;
+    }
+
+    (void)k_work_cancel_delayable(&data->cursor_flush_work);
+    iqs9151_cursor_acc_send(data);
+}
+
+static void iqs9151_cursor_flush_work_cb(struct k_work *work) {
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct iqs9151_data *data =
+        CONTAINER_OF(dwork, struct iqs9151_data, cursor_flush_work);
+
+    iqs9151_cursor_acc_send(data);
+}
+
+static void iqs9151_report_cursor(struct iqs9151_data *data, int16_t rel_x, int16_t rel_y) {
+    const int32_t interval_ms = data->params.cursor_report_interval_ms;
+
+    data->cursor_acc_x += rel_x;
+    data->cursor_acc_y += rel_y;
+    data->cursor_acc_valid = true;
+
+    if (interval_ms <= 0 ||
+        (k_uptime_get() - data->last_cursor_report_ms) >= interval_ms) {
+        iqs9151_cursor_flush(data);
+        return;
+    }
+    (void)k_work_reschedule(&data->cursor_flush_work, K_MSEC(interval_ms));
+}
+
+static void iqs9151_scroll_acc_send(struct iqs9151_data *data) {
+    const bool have_x = data->scroll_acc_x != 0;
+    const bool have_y = data->scroll_acc_y != 0;
+
+    if (!data->scroll_acc_valid) {
+        return;
+    }
+
+    if (have_x) {
+        iqs9151_report_rel_event(data->dev, INPUT_REL_HWHEEL, -data->scroll_acc_x, !have_y,
+                                 K_NO_WAIT);
+    }
+    if (have_y) {
+        iqs9151_report_rel_event(data->dev, INPUT_REL_WHEEL, data->scroll_acc_y, true,
+                                 K_NO_WAIT);
+    }
+    data->scroll_acc_x = 0;
+    data->scroll_acc_y = 0;
+    data->scroll_acc_valid = false;
+    data->last_scroll_report_ms = k_uptime_get();
+}
+
+static void iqs9151_scroll_flush(struct iqs9151_data *data) {
+    if (!data->scroll_acc_valid) {
+        return;
+    }
+
+    (void)k_work_cancel_delayable(&data->scroll_flush_work);
+    iqs9151_scroll_acc_send(data);
+}
+
+static void iqs9151_scroll_flush_work_cb(struct k_work *work) {
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct iqs9151_data *data =
+        CONTAINER_OF(dwork, struct iqs9151_data, scroll_flush_work);
+
+    iqs9151_scroll_acc_send(data);
+}
+
+static void iqs9151_report_scroll(struct iqs9151_data *data, int16_t scroll_x,
+                                  int16_t scroll_y) {
+    const int32_t interval_ms = data->params.scroll_report_interval_ms;
+
+    if (scroll_x == 0 && scroll_y == 0) {
+        return;
+    }
+
+    data->scroll_acc_x += scroll_x;
+    data->scroll_acc_y += scroll_y;
+    data->scroll_acc_valid = true;
+
+    if (interval_ms <= 0 ||
+        (k_uptime_get() - data->last_scroll_report_ms) >= interval_ms) {
+        iqs9151_scroll_flush(data);
+        return;
+    }
+    (void)k_work_reschedule(&data->scroll_flush_work, K_MSEC(interval_ms));
+}
+
+static void iqs9151_report_acc_reset(struct iqs9151_data *data) {
+    (void)k_work_cancel_delayable(&data->cursor_flush_work);
+    (void)k_work_cancel_delayable(&data->scroll_flush_work);
+    data->cursor_acc_x = 0;
+    data->cursor_acc_y = 0;
+    data->cursor_acc_valid = false;
+    data->last_cursor_report_ms = 0;
+    data->scroll_acc_x = 0;
+    data->scroll_acc_y = 0;
+    data->scroll_acc_valid = false;
+    data->last_scroll_report_ms = 0;
 }
 
 static const uint8_t iqs9151_alp_compensation[] = {
@@ -902,6 +1029,7 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
         return;
     }
 
+    iqs9151_cursor_flush(data);
     iqs9151_report_key_event(dev, data->hold_button, false, true, K_FOREVER);
     data->hold_button = 0U;
 }
@@ -986,6 +1114,7 @@ static bool iqs9151_emit_click(struct iqs9151_data *data,
         return false;
     }
 
+    iqs9151_cursor_flush(data);
     iqs9151_report_key_event(dev, button, true, true, K_FOREVER);
     iqs9151_report_key_event(dev, button, false, true, K_FOREVER);
     return true;
@@ -998,6 +1127,7 @@ static bool iqs9151_emit_hold_press(struct iqs9151_data *data,
         return false;
     }
 
+    iqs9151_cursor_flush(data);
     iqs9151_report_key_event(dev, button, true, true, K_FOREVER);
     data->hold_button = button;
     return true;
@@ -1612,6 +1742,7 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
             if (iqs9151_abs32(data->three_dx) >= p->f3_swipe_threshold &&
                 iqs9151_abs32(data->three_dx) >= iqs9151_abs32(data->three_dy)) {
                 const uint16_t key = (data->three_dx < 0) ? INPUT_BTN_4 : INPUT_BTN_3;
+                iqs9151_cursor_flush(data);
                 iqs9151_report_key_event(dev, key, true, true, K_FOREVER);
                 iqs9151_report_key_event(dev, key, false, true, K_FOREVER);
                 data->three_swipe_sent = true;
@@ -1619,6 +1750,7 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
             } else if (iqs9151_abs32(data->three_dy) >= p->f3_swipe_threshold &&
                        iqs9151_abs32(data->three_dy) > iqs9151_abs32(data->three_dx)) {
                 const uint16_t key = (data->three_dy < 0) ? INPUT_BTN_5 : INPUT_BTN_6;
+                iqs9151_cursor_flush(data);
                 iqs9151_report_key_event(dev, key, true, true, K_FOREVER);
                 iqs9151_report_key_event(dev, key, false, true, K_FOREVER);
                 data->three_swipe_sent = true;
@@ -1744,6 +1876,7 @@ static void iqs9151_reset_gesture_states(struct iqs9151_data *data,
                                          const struct device *dev,
                                          bool release_hold) {
     if (data->two_finger.active && data->two_finger.mode == IQS9151_2F_MODE_PINCH) {
+        iqs9151_cursor_flush(data);
         iqs9151_report_key_event(dev, INPUT_BTN_7, false, true, K_FOREVER);
     }
     if (release_hold) {
@@ -2004,6 +2137,7 @@ static bool iqs9151_handle_show_reset(struct iqs9151_data *data,
 
     LOG_WRN("SHOW_RESET detected: info=0x%04x", frame->info_flags);
     iqs9151_reset_gesture_states(data, dev, true);
+    iqs9151_report_acc_reset(data);
     iqs9151_inertia_cancel(&data->inertia_scroll, &data->inertia_scroll_work);
     iqs9151_inertia_cancel(&data->inertia_cursor, &data->inertia_cursor_work);
     iqs9151_ema_reset(&data->scroll_ema_x_fp, &data->scroll_ema_y_fp);
@@ -2233,11 +2367,22 @@ static void iqs9151_update_inertia_ema(struct iqs9151_data *data,
     }
 }
 
-static void iqs9151_report_frame_events(const struct device *dev,
+static void iqs9151_report_frame_events(struct iqs9151_data *data,
                                         const struct iqs9151_frame *frame,
                                         const struct iqs9151_two_finger_result *two_result,
                                         bool cursor_moving,
                                         bool suppress_cursor_tail) {
+    const struct device *dev = data->dev;
+    const bool cursor_frame =
+        frame->finger_count == 1U && cursor_moving && !suppress_cursor_tail;
+
+    if (!cursor_frame) {
+        iqs9151_cursor_flush(data);
+    }
+    if (!two_result->scroll_active) {
+        iqs9151_scroll_flush(data);
+    }
+
     if (two_result->pinch_started) {
         iqs9151_report_key_event(dev, INPUT_BTN_7, true, true, K_FOREVER);
     }
@@ -2250,25 +2395,15 @@ static void iqs9151_report_frame_events(const struct device *dev,
             iqs9151_report_rel_event(dev, INPUT_REL_WHEEL, two_result->pinch_wheel, true, K_NO_WAIT);
         }
     } else if (two_result->scroll_active) {
-        const bool have_x = two_result->scroll_x != 0;
-        const bool have_y = two_result->scroll_y != 0;
-        if (have_x) {
-            iqs9151_report_rel_event(dev, INPUT_REL_HWHEEL, (int16_t)(-two_result->scroll_x),
-                                     !have_y, K_NO_WAIT);
-        }
-        if (have_y) {
-            iqs9151_report_rel_event(dev, INPUT_REL_WHEEL, two_result->scroll_y, true, K_NO_WAIT);
-        }
-    } else if (frame->finger_count == 1U && cursor_moving && !suppress_cursor_tail) {
-        iqs9151_report_rel_event(dev, INPUT_REL_X, frame->rel_x, false, K_NO_WAIT);
-        iqs9151_report_rel_event(dev, INPUT_REL_Y, frame->rel_y, true, K_NO_WAIT);
+        iqs9151_report_scroll(data, two_result->scroll_x, two_result->scroll_y);
+    } else if (cursor_frame) {
+        iqs9151_report_cursor(data, frame->rel_x, frame->rel_y);
     }
 }
 
 static void iqs9151_process_frame(struct iqs9151_data *data,
                                   const struct iqs9151_frame *frame,
                                   int64_t now_ms) {
-    const struct device *dev = data->dev;
     const struct iqs9151_frame prev_frame = data->prev_frame;
     struct iqs9151_two_finger_result two_result;
     const bool cursor_moving =
@@ -2302,7 +2437,7 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
         iqs9151_motion_history_reset(&data->cursor_motion_history);
     }
 
-    iqs9151_report_frame_events(dev, frame, &two_result, cursor_moving,
+    iqs9151_report_frame_events(data, frame, &two_result, cursor_moving,
                                 suppress_cursor_tail);
 
     if (iqs9151_trace_enabled) {
@@ -2749,6 +2884,9 @@ static int iqs9151_init(const struct device *dev) {
     k_work_init_delayable(&data->three_finger_click_work, iqs9151_three_finger_click_work_cb);
     k_work_init_delayable(&data->inertia_scroll_work, iqs9151_inertia_scroll_work_cb);
     k_work_init_delayable(&data->inertia_cursor_work, iqs9151_inertia_cursor_work_cb);
+    k_work_init_delayable(&data->cursor_flush_work, iqs9151_cursor_flush_work_cb);
+    k_work_init_delayable(&data->scroll_flush_work, iqs9151_scroll_flush_work_cb);
+    iqs9151_report_acc_reset(data);
     iqs9151_inertia_state_reset(&data->inertia_scroll);
     iqs9151_inertia_state_reset(&data->inertia_cursor);
     iqs9151_ema_reset(&data->scroll_ema_x_fp, &data->scroll_ema_y_fp);
@@ -2810,6 +2948,9 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     k_work_init_delayable(&data->three_finger_click_work, iqs9151_three_finger_click_work_cb);
     k_work_init_delayable(&data->inertia_scroll_work, iqs9151_inertia_scroll_work_cb);
     k_work_init_delayable(&data->inertia_cursor_work, iqs9151_inertia_cursor_work_cb);
+    k_work_init_delayable(&data->cursor_flush_work, iqs9151_cursor_flush_work_cb);
+    k_work_init_delayable(&data->scroll_flush_work, iqs9151_scroll_flush_work_cb);
+    iqs9151_report_acc_reset(data);
     iqs9151_inertia_state_reset(&data->inertia_scroll);
     iqs9151_inertia_state_reset(&data->inertia_cursor);
     iqs9151_ema_reset(&data->scroll_ema_x_fp, &data->scroll_ema_y_fp);
@@ -2838,6 +2979,8 @@ void iqs9151_test_cancel_pending_work(void *ctx) {
     (void)k_work_cancel_delayable(&data->three_finger_click_work);
     (void)k_work_cancel_delayable(&data->inertia_scroll_work);
     (void)k_work_cancel_delayable(&data->inertia_cursor_work);
+    (void)k_work_cancel_delayable(&data->cursor_flush_work);
+    (void)k_work_cancel_delayable(&data->scroll_flush_work);
     (void)k_work_cancel(&data->work);
 }
 

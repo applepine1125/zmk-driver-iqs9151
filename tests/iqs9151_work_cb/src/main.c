@@ -8,7 +8,7 @@
 #include <errno.h>
 #include <string.h>
 
-#define IQS9151_TEST_CTX_BUF_SIZE 1536
+#define IQS9151_TEST_CTX_BUF_SIZE 2048
 #define IQS9151_TEST_MAX_EVENTS 32
 
 struct event_log {
@@ -1526,6 +1526,194 @@ ZTEST(iqs9151_work_cb, test_trace_disabled_by_default_and_can_be_enabled_and_dis
     zassert_true(iqs9151_dev_trace_enabled(), NULL);
     iqs9151_dev_trace_enable(false);
     zassert_false(iqs9151_dev_trace_enabled(), NULL);
+}
+
+static struct iqs9151_test_frame make_cursor_move_frame(int16_t rel_x, int16_t rel_y,
+                                                        uint16_t finger1_x) {
+    return make_frame(1U,
+                      IQS9151_TP_FINGER1_CONFIDENCE | IQS9151_TP_MOVEMENT_DETECTED | 1U,
+                      rel_x, rel_y, 0, finger1_x, 100, 0, 0);
+}
+
+static struct iqs9151_test_frame make_two_finger_frame(uint16_t finger1_x) {
+    return make_frame(2U,
+                      IQS9151_TP_FINGER1_CONFIDENCE | IQS9151_TP_FINGER2_CONFIDENCE | 2U,
+                      0, 0, 0, finger1_x, 100, (uint16_t)(finger1_x + 100U), 100);
+}
+
+static void set_driver_param(struct iqs9151_work_cb_fixture *fixture, const char *name,
+                             int32_t value) {
+    zassert_equal(iqs9151_dev_param_set(iqs9151_test_fake_dev(fixture->ctx), name, value), 0,
+                  "%s の set に失敗", name);
+}
+
+static void assert_rel_event(const struct iqs9151_test_event *event, uint16_t code,
+                             int32_t value, bool sync) {
+    zassert_equal(event->type, IQS9151_TEST_EVENT_REL, "REL ではない");
+    zassert_equal(event->code, code, "code=%u", event->code);
+    zassert_equal(event->value, value, "value=%d", event->value);
+    zassert_equal(event->sync, sync, "sync=%d", (int)event->sync);
+}
+
+/* 送信間隔が 0 のとき、移動フレームを 2 回処理すると REL X/Y がフレームごとに送られる */
+ZTEST_F(iqs9151_work_cb, test_report_interval_zero_sends_rel_every_frame) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(1, 2, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(3, 4, 140);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_1, k_uptime_get());
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_X, 1, false);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_Y, 2, true);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 3, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 4, true);
+}
+
+/* 送信間隔が 16 のとき、移動フレームを 5ms 間隔で入れると、最初の 1 回と 16ms 経過後の 1 回だけ合算して送られる */
+ZTEST_F(iqs9151_work_cb, test_report_interval_16_coalesces_cursor_until_interval_elapses) {
+    const struct iqs9151_test_frame first = make_cursor_move_frame(2, 3, 100);
+    int64_t first_ms;
+    uint16_t accumulated = 0U;
+
+    set_driver_param(fixture, "cursor_report_interval_ms", 16);
+
+    first_ms = k_uptime_get();
+    iqs9151_test_process_frame(fixture->ctx, &first, first_ms);
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+
+    for (;;) {
+        k_msleep(5);
+        if ((k_uptime_get() - first_ms) >= 16) {
+            break;
+        }
+        const struct iqs9151_test_frame move =
+            make_cursor_move_frame(2, 3, (uint16_t)(100U + ((accumulated + 1U) * 10U)));
+
+        iqs9151_test_process_frame(fixture->ctx, &move, k_uptime_get());
+        accumulated++;
+        zassert_equal(fixture->log.count, 2U, "frame %u: events=%u",
+                      (unsigned int)accumulated, (unsigned int)fixture->log.count);
+    }
+    zassert_true(accumulated >= 1U, "間隔内に累積されたフレームがない");
+
+    const struct iqs9151_test_frame last =
+        make_cursor_move_frame(2, 3, (uint16_t)(100U + ((accumulated + 1U) * 10U)));
+
+    iqs9151_test_process_frame(fixture->ctx, &last, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_X, 2, false);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_Y, 3, true);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 2 * (accumulated + 1), false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 3 * (accumulated + 1), true);
+}
+
+/* 送信間隔が 16 のとき、移動 1 フレーム後に指を離すと、離しフレームで残りの累積が送られる */
+ZTEST_F(iqs9151_work_cb, test_report_interval_16_flushes_cursor_on_release) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(2, 3, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(4, 5, 140);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    set_driver_param(fixture, "cursor_report_interval_ms", 16);
+    set_driver_param(fixture, "cursor_inertia_enable", 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_1, k_uptime_get());
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, k_uptime_get());
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &release, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 4, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 5, true);
+}
+
+/* 送信間隔が 16 のとき、移動後にフレームが止まると、間隔経過後に flush work が残りを送る */
+ZTEST_F(iqs9151_work_cb, test_report_interval_16_flush_work_sends_remainder_when_frames_stop) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(2, 3, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(4, 5, 140);
+
+    set_driver_param(fixture, "cursor_report_interval_ms", 16);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_1, k_uptime_get());
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, k_uptime_get());
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+
+    k_msleep(30);
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 4, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 5, true);
+}
+
+/* 送信間隔が 16 で累積が残っているとき、タップで BTN0 を送ると、その直前に累積カーソルが送られる */
+ZTEST_F(iqs9151_work_cb, test_report_interval_16_flushes_cursor_before_button_event) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(2, 3, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(4, 5, 110);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    set_driver_param(fixture, "cursor_report_interval_ms", 16);
+    set_driver_param(fixture, "cursor_inertia_enable", 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_1, k_uptime_get());
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, k_uptime_get());
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+
+    k_msleep(5);
+    iqs9151_test_process_frame(fixture->ctx, &release, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 5U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 4, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 5, true);
+    zassert_equal(fixture->log.events[4].type, IQS9151_TEST_EVENT_KEY, "Event[4] not key");
+    zassert_equal(fixture->log.events[4].code, INPUT_BTN_0, "Event[4] unexpected code");
+    zassert_equal(fixture->log.events[4].value, 1, "Event[4] should be BTN0 press");
+}
+
+/* スクロール送信間隔が 16 のとき、2F スクロールを 5ms 間隔で入れると、最初の 1 回と 16ms 経過後の 1 回だけ合算して送られる */
+ZTEST_F(iqs9151_work_cb, test_scroll_report_interval_16_coalesces_wheel_until_interval_elapses) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame scroll_first = make_two_finger_frame(160);
+    int64_t first_ms;
+    uint16_t accumulated = 0U;
+
+    set_driver_param(fixture, "scroll_report_interval_ms", 16);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, k_uptime_get());
+    k_msleep(5);
+    first_ms = k_uptime_get();
+    iqs9151_test_process_frame(fixture->ctx, &scroll_first, first_ms);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_HWHEEL, -60, true);
+
+    for (;;) {
+        k_msleep(5);
+        if ((k_uptime_get() - first_ms) >= 16) {
+            break;
+        }
+        const struct iqs9151_test_frame scroll =
+            make_two_finger_frame((uint16_t)(160U + ((accumulated + 1U) * 10U)));
+
+        iqs9151_test_process_frame(fixture->ctx, &scroll, k_uptime_get());
+        accumulated++;
+        zassert_equal(fixture->log.count, 1U, "frame %u: events=%u",
+                      (unsigned int)accumulated, (unsigned int)fixture->log.count);
+    }
+    zassert_true(accumulated >= 1U, "間隔内に累積されたフレームがない");
+
+    const struct iqs9151_test_frame scroll_last =
+        make_two_finger_frame((uint16_t)(160U + ((accumulated + 1U) * 10U)));
+
+    iqs9151_test_process_frame(fixture->ctx, &scroll_last, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -10 * (accumulated + 1), true);
 }
 
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);
