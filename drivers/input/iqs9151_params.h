@@ -217,6 +217,17 @@ void iqs9151_dev_summary_enable(bool enable);
 bool iqs9151_dev_summary_enabled(void);
 
 /*
+ * 要約コーデック(iqs9151_summary_codec.c)。GATT/split 転送用に 10 語の uint32 配列へパックする。
+ */
+#define IQS9151_SUMMARY_WORDS 10
+
+void iqs9151_summary_pack(const struct iqs9151_attempt_summary *s,
+                          uint32_t words[IQS9151_SUMMARY_WORDS]);
+void iqs9151_summary_unpack(const uint32_t words[IQS9151_SUMMARY_WORDS],
+                            struct iqs9151_attempt_summary *s);
+int iqs9151_summary_format(const struct iqs9151_attempt_summary *s, char *buf, size_t len);
+
+/*
  * 永続化(iqs9151_settings.c、CONFIG_INPUT_IQS9151_SETTINGS)。
  * ブロブ: uint16 version(=1), uint16 count, int32 values[count](テーブル順、LE)。
  */

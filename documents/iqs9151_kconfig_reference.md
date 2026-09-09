@@ -152,6 +152,8 @@ IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレー�
 
 要約は `struct iqs9151_attempt_summary`(`iqs9151_params.h`)で、`iqs9151_dev_set_summary_callback(cb, user_data)` で登録したコールバックにも同じ内容が渡る(GATT 通知などに使う)。コールバックは `tp summary off` でも呼ばれる。試行終了から先(慣性の残りなど)に送ったイベントは次の試行に含まれない。
 
+`iqs9151_summary_codec.c`(`iqs9151_params.h` に宣言)は、この要約を GATT/split 転送向けに `uint32_t words[IQS9151_SUMMARY_WORDS]`(10 語)へパックする。語 0=`start_ms`、1=`end_ms`、2=`contacts | fingers_max<<8 | mode2f<<16 | hold<<24`、3=`min(down_ms,65535) | min(gap_ms,65535)<<16`、4=`move_sum`、5=`centroid_move`、6=`dist_delta`(符号ビットごと `uint32_t` 化)、7=`btn_press_bits | btn_release_bits<<8 | wheel_count<<16`、8=`wheel_sum`(同様に `uint32_t` 化)、9=`rel_count | drops<<16`。`iqs9151_summary_pack`/`iqs9151_summary_unpack` で相互変換でき、`iqs9151_summary_format` は上記の `T S` 行と同じ書式の文字列を作る。
+
 ### 永続化(INPUT_IQS9151_SETTINGS)
 
 settings キー `iqs9151/params` に 1 ブロブで保存する。書式は `uint16 version(=1)`, `uint16 count`, `int32 values[count]`(すべて little-endian、値は `tp list` の順)。

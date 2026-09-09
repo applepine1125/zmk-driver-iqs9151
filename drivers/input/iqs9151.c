@@ -917,11 +917,11 @@ static int32_t iqs9151_abs32(int32_t value) {
 }
 
 static void iqs9151_summary_log_cb(const struct iqs9151_attempt_summary *s, void *user_data) {
+    char buf[128];
+
     ARG_UNUSED(user_data);
-    LOG_INF("T S %u %u %u %u %u %u %u %u %d %u %u %u %u %d %u %u %u", s->start_ms, s->end_ms,
-            s->contacts, s->fingers_max, s->down_ms, s->gap_ms, s->move_sum, s->centroid_move,
-            s->dist_delta, s->mode2f, s->btn_press_bits, s->btn_release_bits, s->wheel_count,
-            s->wheel_sum, s->rel_count, s->drops, s->hold);
+    (void)iqs9151_summary_format(s, buf, sizeof(buf));
+    LOG_INF("%s", buf);
 }
 
 static void iqs9151_summary_emit(struct iqs9151_data *data) {

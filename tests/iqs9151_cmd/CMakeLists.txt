@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20.0)
 set(CONFIG_APPLICATION_DEFINED_SYSCALL true)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(iqs9151_work_cb_test)
+project(iqs9151_cmd_test)
 
 set(ZMK_APP_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../../zmk/app)
 zephyr_syscall_header(${ZMK_APP_DIR}/include/drivers/behavior.h)
@@ -13,6 +13,7 @@ target_sources(app PRIVATE
     src/main.c
     ../../drivers/input/iqs9151.c
     ../../drivers/input/iqs9151_params.c
+    ../../drivers/input/iqs9151_cmd.c
     ../../drivers/input/iqs9151_summary_codec.c
 )
 

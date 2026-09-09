@@ -15,6 +15,8 @@ target_sources(app PRIVATE
     ../../drivers/input/iqs9151_params.c
     ../../drivers/input/iqs9151_settings.c
     ../../drivers/input/iqs9151_shell.c
+    ../../drivers/input/iqs9151_cmd.c
+    ../../drivers/input/iqs9151_summary_codec.c
 )
 
 target_include_directories(app PRIVATE
