@@ -4,6 +4,7 @@
 #include <zephyr/device.h>
 #include <zephyr/sys/util.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -183,5 +184,30 @@ int iqs9151_dev_param_reset(const struct device *dev);
 int iqs9151_dev_request_reati(const struct device *dev);
 void iqs9151_dev_trace_enable(bool enable);
 bool iqs9151_dev_trace_enabled(void);
+
+/*
+ * 永続化(iqs9151_settings.c、CONFIG_INPUT_IQS9151_SETTINGS)。
+ * ブロブ: uint16 version(=1), uint16 count, int32 values[count](テーブル順、LE)。
+ */
+#ifdef CONFIG_INPUT_IQS9151_SETTINGS
+int iqs9151_settings_encode(const struct iqs9151_params *p, uint8_t *buf, size_t len);
+int iqs9151_settings_decode(const uint8_t *buf, size_t len, struct iqs9151_params *p);
+int iqs9151_settings_save(const struct device *dev);
+int iqs9151_settings_clear(void);
+bool iqs9151_settings_loaded(void);
+#else
+static inline int iqs9151_settings_save(const struct device *dev) {
+    ARG_UNUSED(dev);
+    return -ENOTSUP;
+}
+
+static inline int iqs9151_settings_clear(void) {
+    return -ENOTSUP;
+}
+
+static inline bool iqs9151_settings_loaded(void) {
+    return false;
+}
+#endif
 
 #endif /* ZEPHYR_DRIVERS_INPUT_IQS9151_PARAMS_H_ */

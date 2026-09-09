@@ -34,9 +34,10 @@ static int cmd_tp_info(const struct shell *sh, size_t argc, char **argv) {
     ARG_UNUSED(argv);
 
     /* Non-split builds (CONFIG_ZMK_SPLIT_ROLE_CENTRAL unset) also report "peripheral". */
-    shell_print(sh, "side=%s uptime_ms=%u params=%u",
+    shell_print(sh, "side=%s uptime_ms=%u params=%u saved=%s",
                 IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) ? "central" : "peripheral",
-                (uint32_t)k_uptime_get(), (unsigned int)iqs9151_param_count());
+                (uint32_t)k_uptime_get(), (unsigned int)iqs9151_param_count(),
+                iqs9151_settings_loaded() ? "yes" : "no");
     return 0;
 }
 
@@ -112,7 +113,26 @@ static int cmd_tp_reset(const struct shell *sh, size_t argc, char **argv) {
         return -ENODEV;
     }
     (void)iqs9151_dev_param_reset(dev);
+    (void)iqs9151_settings_clear();
     shell_print(sh, "OK reset");
+    return 0;
+}
+
+static int cmd_tp_save(const struct shell *sh, size_t argc, char **argv) {
+    const struct device *dev = tp_device(sh);
+    int ret;
+
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    if (dev == NULL) {
+        return -ENODEV;
+    }
+    ret = iqs9151_settings_save(dev);
+    if (ret != 0) {
+        shell_print(sh, "ERR %d", ret);
+        return ret;
+    }
+    shell_print(sh, "OK saved");
     return 0;
 }
 
@@ -149,7 +169,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(list, NULL, "List params: name value min max kind default", cmd_tp_list, 1, 0),
     SHELL_CMD_ARG(get, NULL, "get <name>", cmd_tp_get, 2, 0),
     SHELL_CMD_ARG(set, NULL, "set <name> <value>", cmd_tp_set, 3, 0),
-    SHELL_CMD_ARG(reset, NULL, "Reset all params to Kconfig defaults", cmd_tp_reset, 1, 0),
+    SHELL_CMD_ARG(reset, NULL, "Reset all params to Kconfig defaults and delete saved values",
+                  cmd_tp_reset, 1, 0),
+    SHELL_CMD_ARG(save, NULL, "Save current params to settings", cmd_tp_save, 1, 0),
     SHELL_CMD_ARG(reati, NULL, "Request Re-ATI on next frame", cmd_tp_reati, 1, 0),
     SHELL_CMD_ARG(trace, NULL, "trace on|off", cmd_tp_trace, 2, 0),
     SHELL_SUBCMD_SET_END);

@@ -485,6 +485,15 @@ config INPUT_IQS9151_SHELL
       Add the "tp" shell command to inspect and change gesture and
       sensitivity parameters at runtime (used by tools/tp-tuner).
 
+config INPUT_IQS9151_SETTINGS
+    bool "IQS9151 runtime parameter persistence"
+    depends on SETTINGS
+    default y if SETTINGS
+    help
+      Store the runtime parameters with the Zephyr settings subsystem
+      under "iqs9151/params" and apply them on settings_load(). Saving
+      is explicit ("tp save"); "tp reset" also deletes the saved blob.
+
 config INPUT_IQS9151_TEST
     bool "IQS9151 test hooks"
     depends on ZTEST

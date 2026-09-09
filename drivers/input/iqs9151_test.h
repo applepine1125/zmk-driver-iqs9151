@@ -60,6 +60,11 @@ uint32_t iqs9151_test_ic_dirty(const void *ctx);
 bool iqs9151_test_reati_pending(const void *ctx);
 uint16_t iqs9151_test_scroll_inertia_decay(const void *ctx);
 const struct device *iqs9151_test_fake_dev(void *ctx);
+
+#ifdef CONFIG_INPUT_IQS9151_SETTINGS
+void iqs9151_settings_test_set_device(const struct device *dev);
+void iqs9151_settings_test_reset_loaded(void);
+#endif
 #endif
 
 #endif /* ZEPHYR_DRIVERS_INPUT_IQS9151_TEST_H_ */

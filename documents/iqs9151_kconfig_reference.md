@@ -99,10 +99,11 @@
 
 間隔 > 0 のとき、アイドル後の最初の移動は即時に送り、以降は「前回送信から間隔以上経過」したフレームで合算値を送る。指を離した(1 本指でなくなった)フレーム、ボタン(K)イベントを送る直前、フレームが止まって間隔が経過したとき(遅延 work)にも残りを送る。1 本指のまま移動なしのフレームが来ても送らない。慣性(inertia)とピンチの WHEEL は対象外。
 
-## 7. Test
+## 7. Persistence / Test
 
 |Symbol|Type|Default|役割|
 | - | - | - | - |
+|`CONFIG_INPUT_IQS9151_SETTINGS`|bool|`y` (SETTINGS有効時)|ランタイムパラメータの永続化（`depends on SETTINGS`）。`tp save` で保存し、起動時の `settings_load()` で適用|
 |`CONFIG_INPUT_IQS9151_TEST`|bool|`n`|ZTEST用の内部テストフック有効化（`depends on ZTEST`）|
 
 ## ランタイム調整(INPUT_IQS9151_SHELL)
@@ -110,15 +111,24 @@
 `CONFIG_INPUT_IQS9151_SHELL=y`(`CONFIG_SHELL=y` が必要)で `tp` シェルコマンドが使える。
 パラメータ名は `CONFIG_INPUT_IQS9151_<NAME>` の `<NAME>` を小文字化したもの(例 `1f_tap_max_ms`)。
 IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレーム処理時に書き込まれる。
-変更は揮発性で、再起動すると Kconfig の値に戻る。
+変更は揮発性で、`tp save` しない限り再起動すると Kconfig の値に戻る。
 
-    tp info                  side=central|peripheral uptime_ms=<n> params=<count>
+    tp info                  side=central|peripheral uptime_ms=<n> params=<count> saved=yes|no
     tp list                  <name> <value> <min> <max> <kind> <default>
     tp get <name>
     tp set <name> <value>
-    tp reset
+    tp reset                 Kconfig 既定に戻し、保存ブロブも削除する
+    tp save                  現在の全値を settings に保存する(OK saved / ERR <errno>)
     tp reati
     tp trace on|off          T F / T E 行を LOG(INF) に出す
 
 `tp trace` の出力を見るには、ビルド時に `CONFIG_INPUT_IQS9151_LOG_LEVEL` を 3 (INF) 以上にしておく必要がある。
 `T F` 行では、2本指セッションが終わるフレームで `2f_mode` が 0 になる。
+
+### 永続化(INPUT_IQS9151_SETTINGS)
+
+settings キー `iqs9151/params` に 1 ブロブで保存する。書式は `uint16 version(=1)`, `uint16 count`, `int32 values[count]`(すべて little-endian、値は `tp list` の順)。
+起動時は ZMK の `main()` が呼ぶ `settings_load()`(ドライバ init より後)でハンドラの `set` が動き、各値を `iqs9151_dev_param_set` で適用する。IC 系は保留ビットに積まれ次フレームで書かれる。
+version か count が合わないブロブは無視して LOG(WRN) を出し、Kconfig 既定のまま動く。範囲外の値はその値だけ飛ばす。
+`saved=yes|no` は「保存ブロブを読み込んだ、または今回の起動で `tp save` した」かを示し、`tp reset` で `no` に戻る。
+`CONFIG_INPUT_IQS9151_SETTINGS` 無効時は `tp save` が `ERR -134`(ENOTSUP)、`saved=no` 固定になる。
