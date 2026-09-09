@@ -186,6 +186,32 @@ void iqs9151_dev_trace_enable(bool enable);
 bool iqs9151_dev_trace_enabled(void);
 
 /*
+ * フレームのライブコールバック(第 5b 段)。tp live on|off [hz] で有効化し、
+ * 指本数/hold/2f モードが変わったフレームは即時、それ以外は 1000/hz ms 間隔で間引いて呼ぶ。
+ */
+struct iqs9151_frame_info {
+    uint32_t ms;
+    uint8_t fingers;
+    int16_t rel_x, rel_y;
+    uint16_t f1x, f1y, f2x, f2y;
+    uint16_t flags;
+    uint16_t hold;
+    uint8_t mode2f;
+    uint8_t pending;
+};
+
+int iqs9151_frame_format(const struct iqs9151_frame_info *f, char *buf, size_t len);
+
+typedef void (*iqs9151_frame_cb_t)(const struct iqs9151_frame_info *f, void *user_data);
+
+void iqs9151_dev_set_frame_callback(iqs9151_frame_cb_t cb, void *user_data);
+int iqs9151_dev_live_enable(bool enable, uint16_t hz);
+bool iqs9151_dev_live_enabled(void);
+uint16_t iqs9151_dev_live_hz(void);
+
+#define IQS9151_LIVE_HZ_DEFAULT 60
+
+/*
  * 試行要約: 指の接触が始まってから、離して 400ms 何も触れないまでを 1 試行として集計する。
  * end_ms は最後に指を離した時刻。LOG 行は "T S" に続けて下の順で 17 値を出す。
  */

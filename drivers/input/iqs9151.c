@@ -52,6 +52,75 @@ void iqs9151_dev_set_summary_callback(iqs9151_summary_cb_t cb, void *user_data) 
     iqs9151_summary_cb.user_data = user_data;
 }
 
+static bool iqs9151_live_enabled;
+static uint16_t iqs9151_live_hz = IQS9151_LIVE_HZ_DEFAULT;
+static struct {
+    iqs9151_frame_cb_t cb;
+    void *user_data;
+} iqs9151_frame_cb;
+static struct {
+    bool has_last;
+    int64_t last_ms;
+    uint8_t last_fingers;
+    uint16_t last_hold;
+    uint8_t last_mode2f;
+} iqs9151_live_throttle;
+
+void iqs9151_dev_set_frame_callback(iqs9151_frame_cb_t cb, void *user_data) {
+    iqs9151_frame_cb.cb = cb;
+    iqs9151_frame_cb.user_data = user_data;
+}
+
+int iqs9151_dev_live_enable(bool enable, uint16_t hz) {
+    if (enable && (hz < 1U || hz > 100U)) {
+        return -ERANGE;
+    }
+    iqs9151_live_enabled = enable;
+    if (enable) {
+        iqs9151_live_hz = hz;
+    }
+    memset(&iqs9151_live_throttle, 0, sizeof(iqs9151_live_throttle));
+    return 0;
+}
+
+bool iqs9151_dev_live_enabled(void) {
+    return iqs9151_live_enabled;
+}
+
+uint16_t iqs9151_dev_live_hz(void) {
+    return iqs9151_live_hz;
+}
+
+/* 指本数/hold/2f モードが変わったフレームは即時、それ以外は 1000/hz ms 間隔で間引いて呼ぶ */
+static void iqs9151_live_notify(const struct iqs9151_frame_info *finfo, int64_t now_ms) {
+    bool should_call;
+
+    if (!iqs9151_live_enabled || iqs9151_frame_cb.cb == NULL) {
+        return;
+    }
+
+    if (!iqs9151_live_throttle.has_last ||
+        finfo->fingers != iqs9151_live_throttle.last_fingers ||
+        finfo->hold != iqs9151_live_throttle.last_hold ||
+        finfo->mode2f != iqs9151_live_throttle.last_mode2f) {
+        should_call = true;
+    } else {
+        should_call = (now_ms - iqs9151_live_throttle.last_ms) >= (1000 / iqs9151_live_hz);
+    }
+
+    if (!should_call) {
+        return;
+    }
+
+    iqs9151_live_throttle.has_last = true;
+    iqs9151_live_throttle.last_ms = now_ms;
+    iqs9151_live_throttle.last_fingers = finfo->fingers;
+    iqs9151_live_throttle.last_hold = finfo->hold;
+    iqs9151_live_throttle.last_mode2f = finfo->mode2f;
+
+    iqs9151_frame_cb.cb(finfo, iqs9151_frame_cb.user_data);
+}
+
 #define DT_DRV_COMPAT azoteq_iqs9151
 
 #define IQS9151_I2C_CHUNK_SIZE 30
@@ -2665,15 +2734,32 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
                                 suppress_cursor_tail);
     iqs9151_summary_end_frame(data, frame, prev_frame.finger_count, now_ms);
 
-    if (iqs9151_trace_enabled) {
+    {
         const uint32_t pending_bits = (data->one_finger_click_pending ? BIT(0) : 0U) |
                                       (data->two_finger_click_pending ? BIT(1) : 0U) |
                                       (data->three_finger_click_pending ? BIT(2) : 0U);
+        const struct iqs9151_frame_info finfo = {
+            .ms = (uint32_t)now_ms,
+            .fingers = frame->finger_count,
+            .rel_x = frame->rel_x,
+            .rel_y = frame->rel_y,
+            .f1x = frame->finger1_x,
+            .f1y = frame->finger1_y,
+            .f2x = frame->finger2_x,
+            .f2y = frame->finger2_y,
+            .flags = frame->trackpad_flags,
+            .hold = data->hold_button,
+            .mode2f = (uint8_t)data->two_finger.mode,
+            .pending = (uint8_t)pending_bits,
+        };
 
-        LOG_INF("T F %u %u %d %d %u %u %u %u %04x %u %u %u", (uint32_t)now_ms,
-                frame->finger_count, frame->rel_x, frame->rel_y, frame->finger1_x,
-                frame->finger1_y, frame->finger2_x, frame->finger2_y, frame->trackpad_flags,
-                data->hold_button, (unsigned int)data->two_finger.mode, pending_bits);
+        if (iqs9151_trace_enabled) {
+            char buf[64];
+
+            (void)iqs9151_frame_format(&finfo, buf, sizeof(buf));
+            LOG_INF("%s", buf);
+        }
+        iqs9151_live_notify(&finfo, now_ms);
     }
 
     LOG_DBG("rel x=%d y=%d info=0x%04x tp=0x%04x finger=%d f1x=%u f1y=%u f2x=%u f2y=%u",
@@ -3238,6 +3324,10 @@ void iqs9151_test_set_event_hook(iqs9151_test_event_hook_t hook, void *user_data
 
 void iqs9151_test_set_summary_hook(iqs9151_summary_cb_t hook, void *user_data) {
     iqs9151_dev_set_summary_callback(hook, user_data);
+}
+
+void iqs9151_test_set_frame_hook(iqs9151_frame_cb_t hook, void *user_data) {
+    iqs9151_dev_set_frame_callback(hook, user_data);
 }
 
 uint16_t iqs9151_test_hold_button(const void *ctx) {

@@ -11,6 +11,7 @@
 #define IQS9151_TEST_CTX_BUF_SIZE 2048
 #define IQS9151_TEST_MAX_EVENTS 32
 #define IQS9151_TEST_MAX_SUMMARIES 4
+#define IQS9151_TEST_MAX_FRAMES 16
 
 struct event_log {
     struct iqs9151_test_event events[IQS9151_TEST_MAX_EVENTS];
@@ -22,10 +23,16 @@ struct summary_log {
     size_t count;
 };
 
+struct frame_log {
+    struct iqs9151_frame_info items[IQS9151_TEST_MAX_FRAMES];
+    size_t count;
+};
+
 struct iqs9151_work_cb_fixture {
     uint8_t ctx[IQS9151_TEST_CTX_BUF_SIZE] __aligned(8);
     struct event_log log;
     struct summary_log summaries;
+    struct frame_log frames;
 };
 
 int input_report(const struct device *dev,
@@ -60,6 +67,16 @@ static void record_summary(const struct iqs9151_attempt_summary *summary, void *
     log->items[log->count++] = *summary;
 }
 
+static void record_frame(const struct iqs9151_frame_info *info, void *user_data) {
+    struct frame_log *log = (struct frame_log *)user_data;
+
+    if (log->count >= IQS9151_TEST_MAX_FRAMES) {
+        return;
+    }
+
+    log->items[log->count++] = *info;
+}
+
 static struct iqs9151_test_frame make_frame(uint8_t finger_count,
                                             uint16_t trackpad_flags,
                                             int16_t rel_x, int16_t rel_y,
@@ -91,6 +108,7 @@ static void *iqs9151_work_cb_setup(void) {
     iqs9151_test_context_init(fixture.ctx, NULL);
     iqs9151_test_set_event_hook(record_event, &fixture.log);
     iqs9151_test_set_summary_hook(record_summary, &fixture.summaries);
+    iqs9151_test_set_frame_hook(record_frame, &fixture.frames);
     return &fixture;
 }
 
@@ -100,10 +118,13 @@ static void iqs9151_work_cb_before(void *fixture_ptr) {
 
     memset(&fixture->log, 0, sizeof(fixture->log));
     memset(&fixture->summaries, 0, sizeof(fixture->summaries));
+    memset(&fixture->frames, 0, sizeof(fixture->frames));
     iqs9151_test_cancel_pending_work(fixture->ctx);
     iqs9151_test_context_init(fixture->ctx, NULL);
     iqs9151_test_set_event_hook(record_event, &fixture->log);
     iqs9151_test_set_summary_hook(record_summary, &fixture->summaries);
+    iqs9151_test_set_frame_hook(record_frame, &fixture->frames);
+    (void)iqs9151_dev_live_enable(false, IQS9151_LIVE_HZ_DEFAULT);
 }
 
 ZTEST_F(iqs9151_work_cb, test_show_reset_releases_pinch_and_clears_state) {
@@ -2076,6 +2097,79 @@ ZTEST_F(iqs9151_work_cb, test_summary_show_reset_discards_attempt) {
 
     zassert_equal(fixture->summaries.count, 0U, "count=%u",
                   (unsigned int)fixture->summaries.count);
+}
+
+/* live on hz=50 の 1 本指フレームを 5ms 間隔で 10 回入れると、最初と 20ms ごとの計 3 回だけ呼ばれる */
+ZTEST_F(iqs9151_work_cb, test_live_throttles_same_finger_count_by_hz) {
+    const struct iqs9151_test_frame frame = make_one_finger_down_frame(100, 100);
+    int ret = iqs9151_dev_live_enable(true, 50);
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+
+    for (int i = 0; i < 10; i++) {
+        iqs9151_test_process_frame(fixture->ctx, &frame, (int64_t)(i * 5));
+    }
+
+    zassert_equal(fixture->frames.count, 3U, "count=%u",
+                  (unsigned int)fixture->frames.count);
+    zassert_equal(fixture->frames.items[0].ms, 0U, NULL);
+    zassert_equal(fixture->frames.items[1].ms, 20U, NULL);
+    zassert_equal(fixture->frames.items[2].ms, 40U, NULL);
+}
+
+/* 指の本数が変わったフレームは間引き間隔に関係なく呼ばれる */
+ZTEST_F(iqs9151_work_cb, test_live_always_calls_on_finger_count_change) {
+    const struct iqs9151_test_frame one = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame two =
+        make_frame(2U, IQS9151_TP_FINGER1_CONFIDENCE | IQS9151_TP_FINGER2_CONFIDENCE | 2U, 0, 0, 0,
+                  100, 100, 200, 200);
+    int ret = iqs9151_dev_live_enable(true, 50);
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+
+    iqs9151_test_process_frame(fixture->ctx, &one, 0);
+    iqs9151_test_process_frame(fixture->ctx, &two, 1);
+
+    zassert_equal(fixture->frames.count, 2U, "count=%u",
+                  (unsigned int)fixture->frames.count);
+    zassert_equal(fixture->frames.items[0].fingers, 1U, NULL);
+    zassert_equal(fixture->frames.items[1].fingers, 2U, NULL);
+    zassert_equal(fixture->frames.items[1].ms, 1U, NULL);
+}
+
+/* live off ではフレームコールバックが呼ばれない */
+ZTEST_F(iqs9151_work_cb, test_live_off_does_not_call_frame_hook) {
+    const struct iqs9151_test_frame frame = make_one_finger_down_frame(100, 100);
+
+    (void)iqs9151_dev_live_enable(false, IQS9151_LIVE_HZ_DEFAULT);
+    iqs9151_test_process_frame(fixture->ctx, &frame, 0);
+    iqs9151_test_process_frame(fixture->ctx, &frame, 100);
+
+    zassert_equal(fixture->frames.count, 0U, "count=%u",
+                  (unsigned int)fixture->frames.count);
+}
+
+/* iqs9151_frame_format は T F 行と同じ書式の文字列を作る */
+ZTEST(iqs9151_work_cb, test_frame_format_matches_expected_string) {
+    const struct iqs9151_frame_info f = {
+        .ms = 1234,
+        .fingers = 2,
+        .rel_x = -3,
+        .rel_y = 5,
+        .f1x = 100,
+        .f1y = 200,
+        .f2x = 300,
+        .f2y = 400,
+        .flags = 0x12,
+        .hold = 7,
+        .mode2f = 1,
+        .pending = 2,
+    };
+    char buf[96];
+    int ret = iqs9151_frame_format(&f, buf, sizeof(buf));
+
+    zassert_equal(strcmp(buf, "T F 1234 2 -3 5 100 200 300 400 0012 7 1 2"), 0, "buf=%s", buf);
+    zassert_equal(ret, (int)strlen(buf), "ret=%d", ret);
 }
 
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);

@@ -221,6 +221,40 @@ static int cmd_summary(size_t argc, char **argv, iqs9151_cmd_out_t out, void *ct
     return 0;
 }
 
+static int cmd_live(size_t argc, char **argv, iqs9151_cmd_out_t out, void *ctx) {
+    if (argc < 2 || argc > 3) {
+        cmd_out(out, ctx, "ERR usage: live on|off [hz]");
+        return -EINVAL;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        int32_t hz = IQS9151_LIVE_HZ_DEFAULT;
+        int ret;
+
+        if (argc == 3 && parse_i32(argv[2], &hz) != 0) {
+            cmd_out(out, ctx, "ERR hz 1..100");
+            return -ERANGE;
+        }
+        ret = iqs9151_dev_live_enable(true, (uint16_t)hz);
+        if (ret != 0) {
+            cmd_out(out, ctx, "ERR hz 1..100");
+            return ret;
+        }
+        cmd_out(out, ctx, "OK live=on hz=%u", (unsigned int)iqs9151_dev_live_hz());
+        return 0;
+    }
+    if (strcmp(argv[1], "off") == 0) {
+        if (argc != 2) {
+            cmd_out(out, ctx, "ERR usage: live on|off [hz]");
+            return -EINVAL;
+        }
+        (void)iqs9151_dev_live_enable(false, iqs9151_dev_live_hz());
+        cmd_out(out, ctx, "OK live=off");
+        return 0;
+    }
+    cmd_out(out, ctx, "ERR expected on|off");
+    return -EINVAL;
+}
+
 int iqs9151_cmd_exec_argv(const struct device *dev, size_t argc, char **argv, iqs9151_cmd_out_t out,
                           void *ctx) {
     const char *sub;
@@ -257,6 +291,9 @@ int iqs9151_cmd_exec_argv(const struct device *dev, size_t argc, char **argv, iq
     }
     if (strcmp(sub, "summary") == 0) {
         return cmd_summary(argc, argv, out, ctx);
+    }
+    if (strcmp(sub, "live") == 0) {
+        return cmd_live(argc, argv, out, ctx);
     }
     cmd_out(out, ctx, "ERR unknown command %s", sub);
     return -ENOENT;

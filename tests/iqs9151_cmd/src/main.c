@@ -250,4 +250,40 @@ ZTEST(iqs9151_cmd, test_summary_format_matches_expected_string) {
     zassert_equal(ret, (int)strlen(buf), "ret=%d", ret);
 }
 
+/* live on は hz 省略時に既定の 60 を使う */
+ZTEST_F(iqs9151_cmd, test_live_on_defaults_to_60hz) {
+    int ret = run(fixture, "live on");
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(strcmp(fixture->log.lines[0], "OK live=on hz=60"), 0, "line=%s",
+                  fixture->log.lines[0]);
+}
+
+/* live on <hz> は指定した hz をそのまま使う */
+ZTEST_F(iqs9151_cmd, test_live_on_with_hz_uses_given_value) {
+    int ret = run(fixture, "live on 30");
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(strcmp(fixture->log.lines[0], "OK live=on hz=30"), 0, "line=%s",
+                  fixture->log.lines[0]);
+}
+
+/* live off は OK live=off を返す */
+ZTEST_F(iqs9151_cmd, test_live_off_reports_ok) {
+    int ret = run(fixture, "live off");
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(strcmp(fixture->log.lines[0], "OK live=off"), 0, "line=%s",
+                  fixture->log.lines[0]);
+}
+
+/* live on の hz が範囲外(0)だと ERANGE になる */
+ZTEST_F(iqs9151_cmd, test_live_on_with_out_of_range_hz_reports_erange) {
+    int ret = run(fixture, "live on 0");
+
+    zassert_equal(ret, -ERANGE, "ret=%d", ret);
+    zassert_equal(strcmp(fixture->log.lines[0], "ERR hz 1..100"), 0, "line=%s",
+                  fixture->log.lines[0]);
+}
+
 ZTEST_SUITE(iqs9151_cmd, NULL, iqs9151_cmd_setup, iqs9151_cmd_before, NULL, NULL);
