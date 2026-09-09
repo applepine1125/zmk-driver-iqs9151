@@ -214,7 +214,8 @@ uint16_t iqs9151_dev_live_hz(void);
 #define IQS9151_LIVE_HZ_DEFAULT 60
 
 /*
- * 試行要約: 指の接触が始まってから、離して 400ms 何も触れないまでを 1 試行として集計する。
+ * 試行要約: 指の接触が始まってから、離してタップドラッグの許容間隔(1f/2f/3f_tapdrag_gap_max_ms
+ * の最大値)+100ms(下限 200ms・上限 1000ms)何も触れないまでを 1 試行として集計する。
  * end_ms は最後に指を離した時刻。LOG 行は "T S" に続けて下の順で 17 値を出す。
  */
 struct iqs9151_attempt_summary {

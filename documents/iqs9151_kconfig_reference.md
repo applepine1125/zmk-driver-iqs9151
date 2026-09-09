@@ -130,15 +130,15 @@ IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレー�
 
 ### 試行要約(T S)
 
-指の接触が始まってから、離して 400ms 何も触れないまでを 1 試行とし、終了時に 1 行出す。400ms 以内の再接触は同じ試行の 2 回目以降の接触として数える。トレース ON/OFF とは独立で、`tp summary off` で止められる。
+指の接触が始まってから、離してタップドラッグの許容間隔(`1f`/`2f`/`3f_tapdrag_gap_max_ms` の最大値)+100ms(下限 200ms・上限 1000ms)何も触れないまでを 1 試行とし、終了時に 1 行出す。この待ち時間以内の再接触は同じ試行の 2 回目以降の接触として数える。トレース ON/OFF とは独立で、`tp summary off` で止められる。
 
     T S <start_ms> <end_ms> <contacts> <fingers_max> <down_ms> <gap_ms> <move_sum> <centroid_move> <dist_delta> <mode2f> <btn_press_bits> <btn_release_bits> <wheel_count> <wheel_sum> <rel_count> <drops> <hold>
 
 |値|意味|
 | - | - |
 |`start_ms`|最初の接触フレームの時刻(uptime ms)|
-|`end_ms`|最後に指を離したフレームの時刻(400ms 待ちは含まない)|
-|`contacts`|接触回数(離して 400ms 以内の再接触を数える)|
+|`end_ms`|最後に指を離したフレームの時刻(アイドル待ちは含まない)|
+|`contacts`|接触回数(離してアイドル待ち以内の再接触を数える)|
 |`fingers_max`|試行中の最大指本数|
 |`down_ms`|1 回目の接触の押下時間(接触開始→その離し)|
 |`gap_ms`|1 回目の離しから 2 回目の接触までの ms(2 回目がなければ 0)|

@@ -155,7 +155,9 @@ static void iqs9151_live_notify(const struct iqs9151_frame_info *finfo, int64_t 
 #define IQS9151_FINGER_HISTORY_SIZE 5
 #define TWO_FINGER_PINCH_WHEEL_DIV 12
 #define TWO_FINGER_PINCH_WHEEL_GAIN_DEN 10
-#define IQS9151_SUMMARY_IDLE_MS 400
+#define IQS9151_SUMMARY_IDLE_MARGIN_MS 100
+#define IQS9151_SUMMARY_IDLE_MIN_MS 200
+#define IQS9151_SUMMARY_IDLE_MAX_MS 1000
 #define IQS9151_SUMMARY_BTN_COUNT 8
 
 struct iqs9151_config {
@@ -1108,6 +1110,15 @@ static void iqs9151_summary_begin_frame(struct iqs9151_data *data,
     iqs9151_summary_sample_two_finger(data);
 }
 
+static uint32_t iqs9151_summary_idle_ms(const struct iqs9151_data *data) {
+    const struct iqs9151_params *p = &data->params;
+    const uint32_t tapdrag_gap_max_ms =
+        MAX(p->f1_tapdrag_gap_max_ms, MAX(p->f2_tapdrag_gap_max_ms, p->f3_tapdrag_gap_max_ms));
+
+    return MIN(IQS9151_SUMMARY_IDLE_MAX_MS,
+              MAX(IQS9151_SUMMARY_IDLE_MIN_MS, tapdrag_gap_max_ms + IQS9151_SUMMARY_IDLE_MARGIN_MS));
+}
+
 static void iqs9151_summary_end_frame(struct iqs9151_data *data,
                                       const struct iqs9151_frame *frame,
                                       uint8_t prev_finger_count, int64_t now_ms) {
@@ -1134,7 +1145,7 @@ static void iqs9151_summary_end_frame(struct iqs9151_data *data,
             s->down_ms = (uint32_t)(now_ms - attempt->first_down_ms);
         }
         attempt->release_ms = now_ms;
-        (void)k_work_reschedule(&data->summary_work, K_MSEC(IQS9151_SUMMARY_IDLE_MS));
+        (void)k_work_reschedule(&data->summary_work, K_MSEC(iqs9151_summary_idle_ms(data)));
     }
 }
 

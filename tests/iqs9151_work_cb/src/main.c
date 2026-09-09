@@ -13,6 +13,15 @@
 #define IQS9151_TEST_MAX_SUMMARIES 4
 #define IQS9151_TEST_MAX_FRAMES 16
 
+/* 試行要約のアイドル待ち時間。ドライバ側の計算(tapdrag_gap_max_ms の最大値+100ms)と
+ * この Kconfig 値(1F 230 / 2F 200 / 3F 230)から導かれる値に追随させる。
+ */
+#define TEST_SUMMARY_TAPDRAG_GAP_MAX_MS                                                        \
+    MAX(CONFIG_INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS,                                            \
+       MAX(CONFIG_INPUT_IQS9151_2F_TAPDRAG_GAP_MAX_MS,                                         \
+          CONFIG_INPUT_IQS9151_3F_TAPDRAG_GAP_MAX_MS))
+#define TEST_SUMMARY_IDLE_MS (TEST_SUMMARY_TAPDRAG_GAP_MAX_MS + 100)
+
 struct event_log {
     struct iqs9151_test_event events[IQS9151_TEST_MAX_EVENTS];
     size_t count;
@@ -1930,7 +1939,8 @@ ZTEST(iqs9151_work_cb, test_summary_enabled_by_default_and_can_be_toggled) {
     zassert_true(iqs9151_dev_summary_enabled(), NULL);
 }
 
-/* 1 本指で 50ms タップして離してから 400ms 経つと、要約が 1 件出て contacts 1・fingers_max 1・down_ms 50・BTN0 押しビットになる */
+/* 1 本指で 50ms タップして離してからアイドル時間(TEST_SUMMARY_IDLE_MS=330ms)経つと、要約が 1 件出て
+ * contacts 1・fingers_max 1・down_ms 50・BTN0 押しビットになる */
 ZTEST_F(iqs9151_work_cb, test_summary_one_finger_tap_reports_single_contact) {
     const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
     const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
@@ -1942,10 +1952,10 @@ ZTEST_F(iqs9151_work_cb, test_summary_one_finger_tap_reports_single_contact) {
     k_msleep(50);
     t_up = k_uptime_get();
     iqs9151_test_process_frame(fixture->ctx, &up, t_up);
-    k_msleep(300);
-    zassert_equal(fixture->summaries.count, 0U, "離してから 400ms 未満では要約が出ない");
+    k_msleep(TEST_SUMMARY_IDLE_MS - 30);
+    zassert_equal(fixture->summaries.count, 0U, "離してからアイドル時間未満では要約が出ない");
 
-    k_msleep(150);
+    k_msleep(60);
 
     zassert_equal(fixture->summaries.count, 1U, "count=%u",
                   (unsigned int)fixture->summaries.count);
@@ -2052,19 +2062,20 @@ ZTEST_F(iqs9151_work_cb, test_summary_two_finger_pinch_reports_pinch_mode_and_di
     zassert_true(s->wheel_count >= 1U, "wheel_count=%u", s->wheel_count);
 }
 
-/* 離してから 200ms 後の再接触は同じ試行になり、その後 400ms 超えてからの接触は別の試行として 2 件目の要約になる */
-ZTEST_F(iqs9151_work_cb, test_summary_recontact_within_400ms_is_same_attempt_and_after_is_new) {
+/* 離してからアイドル時間(330ms)未満の再接触は同じ試行になり、アイドル時間が経って試行が閉じた後の
+ * 接触は別の試行として 2 件目の要約になる */
+ZTEST_F(iqs9151_work_cb, test_summary_recontact_within_idle_is_same_attempt_and_after_is_new) {
     const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
     const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
 
     process_now(fixture, &down);
     k_msleep(20);
     process_now(fixture, &up);
-    k_msleep(200);
+    k_msleep(TEST_SUMMARY_IDLE_MS - 30);
     process_now(fixture, &down);
     k_msleep(20);
     process_now(fixture, &up);
-    k_msleep(450);
+    k_msleep(TEST_SUMMARY_IDLE_MS + 120);
 
     zassert_equal(fixture->summaries.count, 1U, "count=%u",
                   (unsigned int)fixture->summaries.count);
@@ -2073,13 +2084,37 @@ ZTEST_F(iqs9151_work_cb, test_summary_recontact_within_400ms_is_same_attempt_and
     process_now(fixture, &down);
     k_msleep(20);
     process_now(fixture, &up);
-    k_msleep(450);
+    k_msleep(TEST_SUMMARY_IDLE_MS + 120);
 
     zassert_equal(fixture->summaries.count, 2U, "count=%u",
                   (unsigned int)fixture->summaries.count);
     zassert_equal(fixture->summaries.items[1].contacts, 1U, NULL);
     zassert_true(fixture->summaries.items[1].start_ms > fixture->summaries.items[0].end_ms,
                  "2 件目は 1 件目の終了より後に始まる");
+}
+
+/* 1f_tapdrag_gap_max_ms を 600 に上げるとアイドル時間が 700ms になり、650ms 後の再接触も
+ * 同じ試行としてまとめられる */
+ZTEST_F(iqs9151_work_cb, test_summary_idle_follows_widened_tapdrag_gap_max_ms) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame down = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame up = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_tapdrag_gap_max_ms", 600), 0, NULL);
+
+    process_now(fixture, &down);
+    k_msleep(20);
+    process_now(fixture, &up);
+    k_msleep(650);
+    process_now(fixture, &down);
+    k_msleep(20);
+    process_now(fixture, &up);
+    k_msleep(750);
+
+    zassert_equal(fixture->summaries.count, 1U, "count=%u",
+                  (unsigned int)fixture->summaries.count);
+    zassert_equal(fixture->summaries.items[0].contacts, 2U, "contacts=%u",
+                  fixture->summaries.items[0].contacts);
 }
 
 /* SHOW_RESET が来ると、進行中の試行は破棄され要約は出ない */
