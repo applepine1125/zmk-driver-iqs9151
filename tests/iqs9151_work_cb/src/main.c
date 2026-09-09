@@ -1750,4 +1750,125 @@ ZTEST_F(iqs9151_work_cb, test_scroll_report_interval_16_coalesces_wheel_until_in
     assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -10 * (accumulated + 1), true);
 }
 
+static struct iqs9151_test_frame make_two_finger_xy_frame(uint16_t finger1_x, uint16_t finger1_y,
+                                                          uint16_t finger2_x, uint16_t finger2_y) {
+    return make_frame(2U,
+                      IQS9151_TP_FINGER1_CONFIDENCE | IQS9151_TP_FINGER2_CONFIDENCE | 2U,
+                      0, 0, 0, finger1_x, finger1_y, finger2_x, finger2_y);
+}
+
+static void assert_key_event(const struct iqs9151_test_event *event, uint16_t code,
+                             int32_t value) {
+    zassert_equal(event->type, IQS9151_TEST_EVENT_KEY, "KEY ではない");
+    zassert_equal(event->code, code, "code=%u", event->code);
+    zassert_equal(event->value, value, "value=%d", event->value);
+}
+
+static void assert_no_key_event(const struct event_log *log, uint16_t code) {
+    for (size_t i = 0; i < log->count; i++) {
+        zassert_false(log->events[i].type == IQS9151_TEST_EVENT_KEY &&
+                          log->events[i].code == code,
+                      "event[%u] に code=%u の KEY がある", (unsigned int)i, code);
+    }
+}
+
+/* 2 本指が指間距離を ±30 揺らしながら平行に +150 動くと、ピンチにならず REL_WHEEL のスクロールになる */
+ZTEST_F(iqs9151_work_cb, test_two_finger_parallel_move_with_distance_jitter_scrolls) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 200, 100);
+    const struct iqs9151_test_frame move_1 = make_two_finger_xy_frame(85, 150, 215, 150);
+    const struct iqs9151_test_frame move_2 = make_two_finger_xy_frame(115, 200, 185, 200);
+    const struct iqs9151_test_frame move_3 = make_two_finger_xy_frame(100, 250, 200, 250);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &move_1, 10);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, 20);
+    iqs9151_test_process_frame(fixture->ctx, &move_3, 30);
+    iqs9151_test_process_frame(fixture->ctx, &release, 40);
+
+    zassert_equal(fixture->log.count, 3U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_WHEEL, 50, true);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_WHEEL, 50, true);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_WHEEL, 50, true);
+    assert_no_key_event(&fixture->log, INPUT_BTN_7);
+}
+
+/* 重心が +60(スクロール開始しきい値 50 以上)ずれながら指間距離が -160 縮まると、既定比率 1.5 ではピンチになる */
+ZTEST_F(iqs9151_work_cb, test_two_finger_pinch_with_centroid_drift_starts_pinch) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 500, 100);
+    const struct iqs9151_test_frame pinch = make_two_finger_xy_frame(240, 100, 480, 100);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &pinch, 10);
+    iqs9151_test_process_frame(fixture->ctx, &release, 20);
+
+    zassert_equal(fixture->log.count, 3U, "events=%u", (unsigned int)fixture->log.count);
+    assert_key_event(&fixture->log.events[0], INPUT_BTN_7, 1);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_WHEEL,
+                     (-160 * CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10) / (12 * 10), true);
+    assert_key_event(&fixture->log.events[2], INPUT_BTN_7, 0);
+}
+
+/* 距離 -160 / 重心 +60 の同じ動きでも、2f_pinch_ratio_x10 を 40 にするとスクロール、15 に戻すとピンチになる */
+ZTEST_F(iqs9151_work_cb, test_pinch_ratio_param_switches_same_gesture_between_scroll_and_pinch) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 500, 100);
+    const struct iqs9151_test_frame pinch = make_two_finger_xy_frame(240, 100, 480, 100);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    set_driver_param(fixture, "2f_pinch_ratio_x10", 40);
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &pinch, 10);
+    iqs9151_test_process_frame(fixture->ctx, &release, 20);
+
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_HWHEEL, -60, true);
+
+    set_driver_param(fixture, "2f_pinch_ratio_x10", 15);
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 300);
+    iqs9151_test_process_frame(fixture->ctx, &pinch, 310);
+    iqs9151_test_process_frame(fixture->ctx, &release, 320);
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_key_event(&fixture->log.events[1], INPUT_BTN_7, 1);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_WHEEL,
+                     (-160 * CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10) / (12 * 10), true);
+    assert_key_event(&fixture->log.events[3], INPUT_BTN_7, 0);
+}
+
+/* 距離が重心の 1.6 倍で伸びるがピンチ開始しきい値(200)に届かないとき、重心 +50 では待ち、+100(開始しきい値の 2 倍)でスクロールになる */
+ZTEST_F(iqs9151_work_cb, test_centroid_twice_scroll_start_falls_back_to_scroll_when_pinch_not_met) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 200, 100);
+    const struct iqs9151_test_frame move_1 = make_two_finger_xy_frame(60, 150, 240, 150);
+    const struct iqs9151_test_frame move_2 = make_two_finger_xy_frame(20, 200, 280, 200);
+
+    set_driver_param(fixture, "2f_pinch_start_distance", 200);
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &move_1, 10);
+    zassert_equal(fixture->log.count, 0U, "events=%u", (unsigned int)fixture->log.count);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_2, 20);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_WHEEL, 50, true);
+    assert_no_key_event(&fixture->log, INPUT_BTN_7);
+}
+
+/* 比率 4.0 で重心が距離の 1/4 未満に届かず判定保留のとき、距離が開始しきい値の 2 倍(160)に達するとピンチになる */
+ZTEST_F(iqs9151_work_cb, test_distance_twice_pinch_start_falls_back_to_pinch_when_ratio_not_met) {
+    const struct iqs9151_test_frame two_start = make_two_finger_xy_frame(100, 100, 200, 100);
+    const struct iqs9151_test_frame move_1 = make_two_finger_xy_frame(80, 100, 280, 100);
+    const struct iqs9151_test_frame move_2 = make_two_finger_xy_frame(65, 100, 325, 100);
+
+    set_driver_param(fixture, "2f_pinch_ratio_x10", 40);
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &move_1, 10);
+    zassert_equal(fixture->log.count, 0U, "events=%u", (unsigned int)fixture->log.count);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_2, 20);
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_key_event(&fixture->log.events[0], INPUT_BTN_7, 1);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_WHEEL,
+                     (60 * CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10) / (12 * 10), true);
+}
+
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);

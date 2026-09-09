@@ -7,9 +7,9 @@
 
 ZTEST_SUITE(iqs9151_params, NULL, NULL, NULL, NULL, NULL);
 
-/* 定義テーブルは53個で、IC系17個が先頭にあるとき、種別が位置と一致する */
-ZTEST(iqs9151_params, test_table_has_53_params_ic_first) {
-    zassert_equal(iqs9151_param_count(), 53U, "count=%u",
+/* 定義テーブルは54個で、IC系17個が先頭にあるとき、種別が位置と一致する */
+ZTEST(iqs9151_params, test_table_has_54_params_ic_first) {
+    zassert_equal(iqs9151_param_count(), 54U, "count=%u",
                   (unsigned int)iqs9151_param_count());
     for (size_t i = 0; i < iqs9151_param_count(); i++) {
         const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
@@ -57,6 +57,17 @@ ZTEST(iqs9151_params, test_report_interval_params_are_driver_kind_with_range_0_1
         zassert_equal(def->max, 100, "%s", names[i]);
         zassert_equal(def->def, 0, "%s", names[i]);
     }
+}
+
+/* ピンチ比率パラメータは driver 種別で、範囲 5〜50・既定値 15 になる */
+ZTEST(iqs9151_params, test_pinch_ratio_param_is_driver_kind_with_range_5_50_default_15) {
+    const struct iqs9151_param_def *def = iqs9151_param_find("2f_pinch_ratio_x10");
+
+    zassert_not_null(def, "2f_pinch_ratio_x10 が見つからない");
+    zassert_equal(def->kind, IQS9151_PARAM_DRIVER, NULL);
+    zassert_equal(def->min, 5, NULL);
+    zassert_equal(def->max, 50, NULL);
+    zassert_equal(def->def, 15, NULL);
 }
 
 /* 範囲内の値をsetするとgetで返り、範囲外はERANGEになる */

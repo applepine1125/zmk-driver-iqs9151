@@ -405,6 +405,15 @@ config INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10
       Gain for 2F pinch REL_WHEEL output inside the driver.
       10 = 1.0x, 20 = 2.0x, 5 = 0.5x.
 
+config INPUT_IQS9151_2F_PINCH_RATIO_X10
+    int "IQS9151 two-finger pinch/scroll ratio (x10)"
+    range 5 50
+    default 15
+    help
+      Pinch is chosen over scroll when the accumulated distance change is at
+      least ratio/10 times the accumulated centroid movement.
+      15 = 1.5x, 10 = 1.0x, 30 = 3.0x.
+
 config INPUT_IQS9151_3F_TAP_ENABLE
     bool "IQS9151 three-finger tap enable"
     default y

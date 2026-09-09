@@ -142,7 +142,9 @@ enum iqs9151_param_kind {
     X(cursor_report_interval_ms, "cursor_report_interval_ms",                                   \
       CONFIG_INPUT_IQS9151_CURSOR_REPORT_INTERVAL_MS, 0, 100, IQS9151_PARAM_DRIVER, 0)          \
     X(scroll_report_interval_ms, "scroll_report_interval_ms",                                   \
-      CONFIG_INPUT_IQS9151_SCROLL_REPORT_INTERVAL_MS, 0, 100, IQS9151_PARAM_DRIVER, 0)
+      CONFIG_INPUT_IQS9151_SCROLL_REPORT_INTERVAL_MS, 0, 100, IQS9151_PARAM_DRIVER, 0)          \
+    X(f2_pinch_ratio_x10, "2f_pinch_ratio_x10", CONFIG_INPUT_IQS9151_2F_PINCH_RATIO_X10, 5, 50, \
+      IQS9151_PARAM_DRIVER, 0)
 
 #define IQS9151_PARAM_IC_COUNT 17
 

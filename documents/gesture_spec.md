@@ -53,6 +53,7 @@
   - `TWO_FINGER_SCROLL_START_MOVE = 50` (`CONFIG_INPUT_IQS9151_2F_SCROLL_START_MOVE`)
   - `TWO_FINGER_PINCH_START_DISTANCE = 80` (`CONFIG_INPUT_IQS9151_2F_PINCH_START_DISTANCE`)
   - `TWO_FINGER_PINCH_WHEEL_GAIN_X10 = 40` (`CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10`)
+  - `TWO_FINGER_PINCH_RATIO_X10 = 15` (`CONFIG_INPUT_IQS9151_2F_PINCH_RATIO_X10`)
   - `TWO_FINGER_RELEASE_PENDING_MAX_MS = 150` (固定)
   - `TWO_FINGER_ONE_LEAD_MAX_MS = 120` (固定)
 - 3F:
@@ -146,6 +147,7 @@
 - 2F Scroll:
   - 開始: `mode==NONE` かつ
     `max(abs(centroid_dx), abs(centroid_dy)) >= TWO_FINGER_SCROLL_START_MOVE`
+    かつ後述の Scroll/Pinch 判定で Scroll が選ばれたとき
   - 出力: `REL_HWHEEL` / `REL_WHEEL`（設定有効軸のみ）
   - Scroll Inertia:
     - `scroll_ended` 時に、直近
@@ -165,8 +167,8 @@
     - 抑止は全指離し (`finger_count==0`) まで維持する
 - 2F Pinch:
   - 開始: `mode==NONE` かつ
-    `abs(distance_delta) >= TWO_FINGER_PINCH_START_DISTANCE` かつ
-    `abs(distance_delta) > max(abs(centroid_dx), abs(centroid_dy))`
+    `abs(distance_delta) >= TWO_FINGER_PINCH_START_DISTANCE`
+    かつ後述の Scroll/Pinch 判定で Pinch が選ばれたとき
   - `REL_WHEEL` は `step_dist` を基に
     `wheel = (step_dist * TWO_FINGER_PINCH_WHEEL_GAIN_X10) / (12 * 10)` 相当で算出
     （余りはフレーム間で保持）
@@ -175,8 +177,23 @@
     - 尾部の `finger_count==1` では `REL_X/Y` を送出しない
     - 尾部の `finger_count==1` / `1->0` では cursor inertia の seed/start を行わない
     - 抑止は全指離し (`finger_count==0`) まで維持する
-- Scroll/Pinch競合:
-  - 同時成立時は Scroll 優先で mode 固定
+- Scroll/Pinch 判定（`mode==NONE` の各フレームで評価）:
+  - `abs_center = max(abs(centroid_dx), abs(centroid_dy))`、
+    `abs_dist = abs(distance_delta)`
+  - `scroll_ok = scroll有効 かつ abs_center >= TWO_FINGER_SCROLL_START_MOVE`
+  - `pinch_ok = pinch有効 かつ abs_dist >= TWO_FINGER_PINCH_START_DISTANCE`
+  - `dist_dominates = abs_dist * 10 >= abs_center * CONFIG_INPUT_IQS9151_2F_PINCH_RATIO_X10`
+  - 上から順に最初に当てはまったものを採用し、どれにも当てはまらなければ
+    `NONE` のまま次フレームを待つ:
+    1. `pinch_ok && dist_dominates` → Pinch
+    2. `scroll_ok && !dist_dominates` → Scroll
+    3. `scroll_ok` かつ pinch 無効 → Scroll
+    4. `pinch_ok` かつ scroll 無効 → Pinch
+    5. `scroll_ok && abs_center >= 2 * TWO_FINGER_SCROLL_START_MOVE` → Scroll
+       （比率が曖昧でも重心移動が絶対量で十分大きい）
+    6. `pinch_ok && abs_dist >= 2 * TWO_FINGER_PINCH_START_DISTANCE` → Pinch
+       （同上、距離変化側）
+  - 一度 mode が決まったら 2F セッション終了まで固定
 
 ### 4.3 3F
 

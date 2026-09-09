@@ -1349,6 +1349,44 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
     return released_from_hold;
 }
 
+/*
+ * Scroll と Pinch は「距離変化 / 重心移動」の比率で判定する。
+ * どちらの開始しきい値も最低条件として残し、比率が曖昧なまま片方だけが
+ * しきい値の 2 倍に達したときは絶対量で決める。
+ */
+static enum iqs9151_two_finger_mode
+iqs9151_two_finger_decide_mode(const struct iqs9151_params *p,
+                               const struct iqs9151_two_finger_state *state) {
+    const int32_t abs_center =
+        MAX(iqs9151_abs32(state->centroid_dx), iqs9151_abs32(state->centroid_dy));
+    const int32_t abs_dist = iqs9151_abs32(state->distance_delta);
+    const bool scroll_enabled = (p->scroll_x_enable != 0) || (p->scroll_y_enable != 0);
+    const bool pinch_enabled = p->f2_pinch_enable != 0;
+    const bool scroll_ok = scroll_enabled && abs_center >= p->f2_scroll_start_move;
+    const bool pinch_ok = pinch_enabled && abs_dist >= p->f2_pinch_start_distance;
+    const bool dist_dominates = (abs_dist * 10) >= (abs_center * p->f2_pinch_ratio_x10);
+
+    if (pinch_ok && dist_dominates) {
+        return IQS9151_2F_MODE_PINCH;
+    }
+    if (scroll_ok && !dist_dominates) {
+        return IQS9151_2F_MODE_SCROLL;
+    }
+    if (scroll_ok && !pinch_enabled) {
+        return IQS9151_2F_MODE_SCROLL;
+    }
+    if (pinch_ok && !scroll_enabled) {
+        return IQS9151_2F_MODE_PINCH;
+    }
+    if (scroll_ok && abs_center >= 2 * p->f2_scroll_start_move) {
+        return IQS9151_2F_MODE_SCROLL;
+    }
+    if (pinch_ok && abs_dist >= 2 * p->f2_pinch_start_distance) {
+        return IQS9151_2F_MODE_PINCH;
+    }
+    return IQS9151_2F_MODE_NONE;
+}
+
 static void iqs9151_two_finger_update(struct iqs9151_data *data,
                                       const struct iqs9151_frame *frame,
                                       const struct iqs9151_frame *prev_frame,
@@ -1466,20 +1504,11 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         }
 
         if (state->mode == IQS9151_2F_MODE_NONE) {
-            const int32_t abs_center =
-                MAX(iqs9151_abs32(state->centroid_dx), iqs9151_abs32(state->centroid_dy));
-            const int32_t abs_dist = iqs9151_abs32(state->distance_delta);
-            const bool scroll_enabled = (p->scroll_x_enable != 0) ||
-                                        (p->scroll_y_enable != 0);
-
-            if (scroll_enabled && abs_center >= p->f2_scroll_start_move) {
-                state->mode = IQS9151_2F_MODE_SCROLL;
+            state->mode = iqs9151_two_finger_decide_mode(p, state);
+            if (state->mode == IQS9151_2F_MODE_SCROLL) {
                 result->scroll_started = true;
                 state->tap_candidate = false;
-            } else if ((p->f2_pinch_enable != 0) &&
-                       abs_dist >= p->f2_pinch_start_distance &&
-                       abs_dist > abs_center) {
-                state->mode = IQS9151_2F_MODE_PINCH;
+            } else if (state->mode == IQS9151_2F_MODE_PINCH) {
                 result->pinch_started = true;
                 state->tap_candidate = false;
             }
