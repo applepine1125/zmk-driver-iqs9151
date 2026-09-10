@@ -493,6 +493,16 @@ config INPUT_IQS9151_THREAD_STACK_SIZE
     help
       Stack size in bytes for the driver's dedicated work queue thread.
 
+config INPUT_IQS9151_HOLD_COMMS_WINDOW
+    bool "Hold the IQS9151 communication window until explicitly terminated"
+    default y
+    help
+      Set the Terminate Comms Window bit so the RDY window stays open until
+      the driver writes the 0xEEEE terminate command after reading a frame.
+      Without this the window closes before the driver thread reads and every
+      read clock-stretches until the next sensing cycle (one cycle of extra
+      latency, up to hundreds of ms in low-power modes).
+
 config INPUT_IQS9151_SHELL
     bool "IQS9151 tp shell command"
     depends on SHELL

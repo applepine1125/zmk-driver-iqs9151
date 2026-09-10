@@ -277,9 +277,10 @@ static int cmd_stats(size_t argc, char **argv, iqs9151_cmd_out_t out, void *ctx)
             (unsigned int)stats.frame_count, (unsigned int)stats.frame_max_us,
             (unsigned int)stats.frame_avg_us, (unsigned int)stats.frame_gap_max_ms,
             (unsigned int)stats.i2c_errors);
-    cmd_out(out, ctx, "stats i2c_max_us=%u reset_n=%u cpu_max_us=%u rdy_miss=%u",
+    cmd_out(out, ctx, "stats i2c_max_us=%u reset_n=%u cpu_max_us=%u rdy_miss=%u end_err=%u",
             (unsigned int)stats.i2c_max_us, (unsigned int)stats.show_reset_count,
-            (unsigned int)stats.frame_cpu_max_us, (unsigned int)stats.rdy_miss);
+            (unsigned int)stats.frame_cpu_max_us, (unsigned int)stats.rdy_miss,
+            (unsigned int)stats.end_comms_errors);
     cmd_out(out, ctx, "stats isr_n=%u isr_rdy_low=%u isr_to_read_max_us=%u i2c_avg_us=%u i2c_all_max_us=%u",
             (unsigned int)stats.isr_count, (unsigned int)stats.isr_rdy_low,
             (unsigned int)stats.isr_to_read_max_us, (unsigned int)stats.i2c_avg_us,

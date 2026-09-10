@@ -109,9 +109,10 @@ static void iqs9151_stats_record_rdy_miss(void) {
 
 /* k_cycle_get_32 の差分が異常(10 秒超)なら計測ミスとして捨てる */
 static uint32_t iqs9151_cycles_to_us(uint32_t delta_cycles) {
-    uint32_t us = k_cyc_to_us_floor32(delta_cycles);
-
-    return us > 10000000U ? 0U : us;
+    if ((int32_t)delta_cycles < 0) {
+        return 0U;
+    }
+    return k_cyc_to_us_floor32(delta_cycles);
 }
 
 static void iqs9151_stats_record_isr_latency(uint32_t read_start_cycles) {
@@ -130,6 +131,13 @@ static void iqs9151_stats_record_i2c_all(uint32_t us) {
     if (us > iqs9151_stats.i2c_all_max_us) {
         iqs9151_stats.i2c_all_max_us = us;
     }
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
+static void iqs9151_stats_record_end_comms_error(void) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    iqs9151_stats.end_comms_errors++;
     k_spin_unlock(&iqs9151_stats_lock, key);
 }
 
@@ -958,6 +966,23 @@ static int iqs9151_i2c_read(const struct iqs9151_config *cfg, uint16_t reg, uint
     int ret = iqs9151_i2c_read_raw(cfg, reg, buf, len);
 
     iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
+    return ret;
+}
+
+/* 通信窓を閉じる(HOLD_COMMS_WINDOW 時)。レジスタアドレス無しで 0xEE 0xEE を書く */
+static int iqs9151_end_comms(const struct iqs9151_config *cfg) {
+    static const uint8_t cmd[2] = {0xEE, 0xEE};
+    uint32_t start = k_cycle_get_32();
+    int ret;
+
+    if (!IS_ENABLED(CONFIG_INPUT_IQS9151_HOLD_COMMS_WINDOW)) {
+        return 0;
+    }
+    ret = i2c_write_dt(&cfg->i2c, cmd, sizeof(cmd));
+    iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
+    if (ret != 0) {
+        iqs9151_stats_record_end_comms_error();
+    }
     return ret;
 }
 
@@ -2979,6 +3004,10 @@ static void iqs9151_work_cb(struct k_work *work) {
         iqs9151_stats_record_i2c_error();
     } else {
         iqs9151_apply_pending_ic(dev);
+    }
+    /* IC 側の処理を止めないよう、フレームの解析より先に通信窓を閉じる */
+    (void)iqs9151_end_comms(cfg);
+    if (ret == 0) {
         iqs9151_process_frame(data, &frame, now_ms);
         finger_count = frame.finger_count;
     }
@@ -3141,11 +3170,19 @@ static int iqs9151_set_event_mode(const struct device *dev) {
 
     uint16_t settings = sys_get_le16(config_settings);
     settings |= IQS9151_CFG_EVENT_MODE;
+    if (IS_ENABLED(CONFIG_INPUT_IQS9151_HOLD_COMMS_WINDOW)) {
+        settings |= IQS9151_CFG_TERMINATE_COMMS;
+    }
     sys_put_le16(settings, config_settings);
 
     iqs9151_wait_for_ready(dev, 500);
 
-    return iqs9151_i2c_write(cfg, IQS9151_ADDR_CONFIG_SETTINGS, config_settings, sizeof(config_settings));
+    ret = iqs9151_i2c_write(cfg, IQS9151_ADDR_CONFIG_SETTINGS, config_settings, sizeof(config_settings));
+    if (ret != 0) {
+        return ret;
+    }
+    /* ここから先は STOP で窓が閉じないので、開いている窓を明示的に閉じる */
+    return iqs9151_end_comms(cfg);
 }
 
 static int iqs9151_configure(const struct device *dev) {

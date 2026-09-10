@@ -204,6 +204,7 @@ struct iqs9151_stats {
     uint32_t isr_to_read_max_us; /* 割り込みから読み出し開始までの最大時間 */
     uint32_t i2c_avg_us;       /* フレーム読み出しの平均時間 */
     uint32_t i2c_all_max_us;   /* フレーム work 内の全 I2C 送受信の合計時間の最大 */
+    uint32_t end_comms_errors; /* 通信窓を閉じるコマンドの失敗回数 */
 };
 
 void iqs9151_dev_stats_get(struct iqs9151_stats *out, bool reset);

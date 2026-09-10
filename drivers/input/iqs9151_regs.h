@@ -112,6 +112,8 @@
 #define IQS9151_CFG_TP_EVENT_EN                BIT(10)
 #define IQS9151_CFG_GESTURE_EVENT_EN           BIT(9)
 #define IQS9151_CFG_EVENT_MODE                 BIT(8)
+/* 通信窓を I2C STOP ではなく 0xEEEE の書き込みで閉じる(12.7 Terminate Communication) */
+#define IQS9151_CFG_TERMINATE_COMMS            BIT(6)
 #define IQS9151_CFG_MANUAL_MODE                BIT(7)
 
 #endif /* ZEPHYR_DRIVERS_INPUT_IQS9151_REGS_H_ */
