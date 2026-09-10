@@ -298,7 +298,7 @@ ZTEST_F(iqs9151_cmd, test_stats_reports_zero_counts_by_default) {
     zassert_equal(strcmp(fixture->log.lines[1], "stats i2c_max_us=0 reset_n=0 cpu_max_us=0 rdy_miss=0"),
                   0, "line=%s", fixture->log.lines[1]);
     zassert_equal(strcmp(fixture->log.lines[2],
-                         "stats isr_n=0 isr_rdy_low=0 isr_to_read_max_us=0 i2c_avg_us=0"),
+                         "stats isr_n=0 isr_rdy_low=0 isr_to_read_max_us=0 i2c_avg_us=0 i2c_all_max_us=0"),
                   0, "line=%s", fixture->log.lines[2]);
 }
 
@@ -314,7 +314,7 @@ ZTEST_F(iqs9151_cmd, test_stats_noreset_reports_same_format) {
     zassert_equal(strcmp(fixture->log.lines[1], "stats i2c_max_us=0 reset_n=0 cpu_max_us=0 rdy_miss=0"),
                   0, "line=%s", fixture->log.lines[1]);
     zassert_equal(strcmp(fixture->log.lines[2],
-                         "stats isr_n=0 isr_rdy_low=0 isr_to_read_max_us=0 i2c_avg_us=0"),
+                         "stats isr_n=0 isr_rdy_low=0 isr_to_read_max_us=0 i2c_avg_us=0 i2c_all_max_us=0"),
                   0, "line=%s", fixture->log.lines[2]);
 }
 

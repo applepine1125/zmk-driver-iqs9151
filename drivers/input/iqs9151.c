@@ -124,6 +124,15 @@ static void iqs9151_stats_record_isr_latency(uint32_t read_start_cycles) {
     k_spin_unlock(&iqs9151_stats_lock, key);
 }
 
+static void iqs9151_stats_record_i2c_all(uint32_t us) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    if (us > iqs9151_stats.i2c_all_max_us) {
+        iqs9151_stats.i2c_all_max_us = us;
+    }
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
 static void iqs9151_stats_record_show_reset(void) {
     k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
 
@@ -914,7 +923,7 @@ static void iqs9151_sync_inertia_params(struct iqs9151_data *data) {
     data->cursor_gate.min_avg_speed = (int16_t)p->cursor_inertia_min_avg_speed;
 }
 
-static int iqs9151_i2c_write(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
+static int iqs9151_i2c_write_raw(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
     uint8_t tx[2 + IQS9151_I2C_CHUNK_SIZE];
 
     if (len > (sizeof(tx) - 2)) {
@@ -926,11 +935,30 @@ static int iqs9151_i2c_write(const struct iqs9151_config *cfg, uint16_t reg, con
     return i2c_write_dt(&cfg->i2c, tx, len + 2);
 }
 
-static int iqs9151_i2c_read(const struct iqs9151_config *cfg, uint16_t reg, uint8_t *buf, size_t len) {
+static int iqs9151_i2c_read_raw(const struct iqs9151_config *cfg, uint16_t reg, uint8_t *buf, size_t len) {
     uint8_t addr_buf[2];
 
     sys_put_le16(reg, addr_buf);
     return i2c_write_read_dt(&cfg->i2c, addr_buf, sizeof(addr_buf), buf, len);
+}
+
+/* フレーム work 内の全 I2C 時間を積算する(ドライバスレッドからしか呼ばれない) */
+static uint32_t iqs9151_i2c_acc_us;
+
+static int iqs9151_i2c_write(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
+    uint32_t start = k_cycle_get_32();
+    int ret = iqs9151_i2c_write_raw(cfg, reg, buf, len);
+
+    iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
+    return ret;
+}
+
+static int iqs9151_i2c_read(const struct iqs9151_config *cfg, uint16_t reg, uint8_t *buf, size_t len) {
+    uint32_t start = k_cycle_get_32();
+    int ret = iqs9151_i2c_read_raw(cfg, reg, buf, len);
+
+    iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
+    return ret;
 }
 
 static int iqs9151_write_u16(const struct iqs9151_config *cfg, uint16_t reg, uint16_t value) {
@@ -2936,6 +2964,8 @@ static void iqs9151_work_cb(struct k_work *work) {
     const uint32_t start_cycles = k_cycle_get_32();
     const uint64_t start_thread_cycles = iqs9151_thread_cycles();
     uint32_t i2c_us;
+
+    iqs9151_i2c_acc_us = 0U;
     uint8_t finger_count = 0U;
 
     if (!gpio_pin_get_dt(&cfg->irq_gpio)) {
@@ -2953,6 +2983,7 @@ static void iqs9151_work_cb(struct k_work *work) {
         finger_count = frame.finger_count;
     }
 
+    iqs9151_stats_record_i2c_all(iqs9151_i2c_acc_us);
     iqs9151_stats_record_frame(
         iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles), i2c_us,
         iqs9151_cycles_to_us((uint32_t)(iqs9151_thread_cycles() - start_thread_cycles)), now_ms,
