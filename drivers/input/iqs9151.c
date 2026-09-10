@@ -45,6 +45,8 @@ static void iqs9151_work_q_ensure_started(void) {
 
 static struct iqs9151_stats iqs9151_stats;
 static uint64_t iqs9151_stats_sum_us;
+static uint64_t iqs9151_stats_i2c_sum_us;
+static uint32_t iqs9151_last_isr_cycles;
 static struct k_spinlock iqs9151_stats_lock;
 static int64_t iqs9151_stats_last_frame_ms;
 static uint8_t iqs9151_stats_last_fingers;
@@ -73,6 +75,7 @@ static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, uin
     if (i2c_us > iqs9151_stats.i2c_max_us) {
         iqs9151_stats.i2c_max_us = i2c_us;
     }
+    iqs9151_stats_i2c_sum_us += i2c_us;
 
     iqs9151_stats.frame_count++;
     if (elapsed_us > iqs9151_stats.frame_max_us) {
@@ -80,6 +83,7 @@ static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, uin
     }
     iqs9151_stats_sum_us += elapsed_us;
     iqs9151_stats.frame_avg_us = (uint32_t)(iqs9151_stats_sum_us / iqs9151_stats.frame_count);
+    iqs9151_stats.i2c_avg_us = (uint32_t)(iqs9151_stats_i2c_sum_us / iqs9151_stats.frame_count);
 
     if (iqs9151_stats_has_last_frame &&
         (iqs9151_stats_last_fingers > 0U || finger_count > 0U)) {
@@ -110,6 +114,16 @@ static uint32_t iqs9151_cycles_to_us(uint32_t delta_cycles) {
     return us > 10000000U ? 0U : us;
 }
 
+static void iqs9151_stats_record_isr_latency(uint32_t read_start_cycles) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+    uint32_t us = iqs9151_cycles_to_us(read_start_cycles - iqs9151_last_isr_cycles);
+
+    if (us > iqs9151_stats.isr_to_read_max_us) {
+        iqs9151_stats.isr_to_read_max_us = us;
+    }
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
 static void iqs9151_stats_record_show_reset(void) {
     k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
 
@@ -132,6 +146,7 @@ void iqs9151_dev_stats_get(struct iqs9151_stats *out, bool reset) {
     if (reset) {
         memset(&iqs9151_stats, 0, sizeof(iqs9151_stats));
         iqs9151_stats_sum_us = 0U;
+        iqs9151_stats_i2c_sum_us = 0U;
     }
 
     k_spin_unlock(&iqs9151_stats_lock, key);
@@ -2926,6 +2941,7 @@ static void iqs9151_work_cb(struct k_work *work) {
     if (!gpio_pin_get_dt(&cfg->irq_gpio)) {
         iqs9151_stats_record_rdy_miss();
     }
+    iqs9151_stats_record_isr_latency(start_cycles);
     ret = iqs9151_read_frame(cfg, &frame);
     i2c_us = iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles);
     if (ret != 0) {
@@ -2945,6 +2961,15 @@ static void iqs9151_work_cb(struct k_work *work) {
 
 static void iqs9151_gpio_cb(const struct device *port, struct gpio_callback *cb, uint32_t pins) {
     struct iqs9151_data *data = CONTAINER_OF(cb, struct iqs9151_data, gpio_cb);
+    const struct iqs9151_config *cfg = data->dev->config;
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    iqs9151_stats.isr_count++;
+    if (gpio_pin_get_dt(&cfg->irq_gpio)) {
+        iqs9151_stats.isr_rdy_low++;
+    }
+    iqs9151_last_isr_cycles = k_cycle_get_32();
+    k_spin_unlock(&iqs9151_stats_lock, key);
     k_work_submit_to_queue(&iqs9151_work_q, &data->work);
 }
 
