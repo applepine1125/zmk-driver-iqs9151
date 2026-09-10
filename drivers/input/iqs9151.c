@@ -50,9 +50,13 @@ static int64_t iqs9151_stats_last_frame_ms;
 static uint8_t iqs9151_stats_last_fingers;
 static bool iqs9151_stats_has_last_frame;
 
-static void iqs9151_stats_record_frame(uint32_t elapsed_us, int64_t now_ms,
+static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, int64_t now_ms,
                                        uint8_t finger_count) {
     k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    if (i2c_us > iqs9151_stats.i2c_max_us) {
+        iqs9151_stats.i2c_max_us = i2c_us;
+    }
 
     iqs9151_stats.frame_count++;
     if (elapsed_us > iqs9151_stats.frame_max_us) {
@@ -2877,9 +2881,11 @@ static void iqs9151_work_cb(struct k_work *work) {
     int ret;
     const int64_t now_ms = k_uptime_get();
     const uint32_t start_cycles = k_cycle_get_32();
+    uint32_t i2c_us;
     uint8_t finger_count = 0U;
 
     ret = iqs9151_read_frame(cfg, &frame);
+    i2c_us = k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles);
     if (ret != 0) {
         LOG_ERR("frame read failed (%d)", ret);
         iqs9151_stats_record_i2c_error();
@@ -2889,8 +2895,8 @@ static void iqs9151_work_cb(struct k_work *work) {
         finger_count = frame.finger_count;
     }
 
-    iqs9151_stats_record_frame(k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles), now_ms,
-                               finger_count);
+    iqs9151_stats_record_frame(k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles), i2c_us,
+                               now_ms, finger_count);
 }
 
 static void iqs9151_gpio_cb(const struct device *port, struct gpio_callback *cb, uint32_t pins) {
