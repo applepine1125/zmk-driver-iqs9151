@@ -165,6 +165,30 @@ config INPUT_IQS9151_ACTIVE_MODE_TIMEOUT_MS
       Active to Idle Mode Timeout (0x11B4).
       Time without touch before the device leaves active mode.
 
+config INPUT_IQS9151_IDLE_TOUCH_MODE_TIMEOUT_S
+    int "IQS9151 idle-touch mode timeout (s)"
+    range 0 65535
+    default 10
+    help
+      Idle-Touch Mode Timeout (0x11AE).
+      Time with a stationary touch before the device goes to idle mode.
+
+config INPUT_IQS9151_IDLE_MODE_TIMEOUT_S
+    int "IQS9151 idle mode timeout (s)"
+    range 0 65535
+    default 5
+    help
+      Idle Mode Timeout (0x11B0).
+      Time in idle mode before the device goes to LP1.
+
+config INPUT_IQS9151_LP1_MODE_TIMEOUT_S
+    int "IQS9151 LP1 mode timeout (s)"
+    range 0 65535
+    default 40
+    help
+      LP1 Mode Timeout (0x11B2).
+      Time in LP1 before the device goes to LP2.
+
 config INPUT_IQS9151_ALP_SET_DEBOUNCE
     int "IQS9151 ALP set debounce"
     range 0 255

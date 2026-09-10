@@ -85,8 +85,8 @@ static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, uin
     iqs9151_stats.frame_avg_us = (uint32_t)(iqs9151_stats_sum_us / iqs9151_stats.frame_count);
     iqs9151_stats.i2c_avg_us = (uint32_t)(iqs9151_stats_i2c_sum_us / iqs9151_stats.frame_count);
 
-    if (iqs9151_stats_has_last_frame &&
-        (iqs9151_stats_last_fingers > 0U || finger_count > 0U)) {
+    /* 指が乗ったままのフレーム間隔だけを見る(離した後の待ち時間は含めない) */
+    if (iqs9151_stats_has_last_frame && iqs9151_stats_last_fingers > 0U && finger_count > 0U) {
         uint32_t gap_ms = (uint32_t)(now_ms - iqs9151_stats_last_frame_ms);
 
         if (gap_ms > iqs9151_stats.frame_gap_max_ms) {

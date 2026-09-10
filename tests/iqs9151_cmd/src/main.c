@@ -83,7 +83,7 @@ ZTEST_F(iqs9151_cmd, test_list_returns_all_params_with_expected_format) {
     int ret = run(fixture, "list");
 
     zassert_equal(ret, 0, "ret=%d", ret);
-    zassert_equal(fixture->log.count, 54U, "count=%u", (unsigned int)fixture->log.count);
+    zassert_equal(fixture->log.count, 57U, "count=%u", (unsigned int)fixture->log.count);
     zassert_equal(strcmp(fixture->log.lines[0], "touch_set_threshold 30 0 255 ic_u8 30"), 0,
                   "line0=%s", fixture->log.lines[0]);
 }
@@ -96,7 +96,7 @@ ZTEST_F(iqs9151_cmd, test_info_reports_side_and_param_count) {
     zassert_equal(fixture->log.count, 1U, NULL);
     zassert_true(strncmp(fixture->log.lines[0], "side=peripheral uptime_ms=", 26) == 0, "line=%s",
                  fixture->log.lines[0]);
-    zassert_not_null(strstr(fixture->log.lines[0], " params=54 saved=no"), "line=%s",
+    zassert_not_null(strstr(fixture->log.lines[0], " params=57 saved=no"), "line=%s",
                      fixture->log.lines[0]);
 }
 

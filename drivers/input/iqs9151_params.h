@@ -61,6 +61,13 @@ enum iqs9151_param_kind {
     X(active_mode_timeout_ms, "active_mode_timeout_ms",                                         \
       CONFIG_INPUT_IQS9151_ACTIVE_MODE_TIMEOUT_MS, 0, 65535, IQS9151_PARAM_IC_U16,              \
       IQS9151_ADDR_ACTIVE_MODE_TIMEOUT)                                                         \
+    X(idle_touch_mode_timeout_s, "idle_touch_mode_timeout_s",                                   \
+      CONFIG_INPUT_IQS9151_IDLE_TOUCH_MODE_TIMEOUT_S, 0, 65535, IQS9151_PARAM_IC_U16,           \
+      IQS9151_ADDR_IDLE_TOUCH_MODE_TIMEOUT)                                                     \
+    X(idle_mode_timeout_s, "idle_mode_timeout_s", CONFIG_INPUT_IQS9151_IDLE_MODE_TIMEOUT_S, 0,   \
+      65535, IQS9151_PARAM_IC_U16, IQS9151_ADDR_IDLE_MODE_TIMEOUT)                              \
+    X(lp1_mode_timeout_s, "lp1_mode_timeout_s", CONFIG_INPUT_IQS9151_LP1_MODE_TIMEOUT_S, 0,     \
+      65535, IQS9151_PARAM_IC_U16, IQS9151_ADDR_LP1_MODE_TIMEOUT)                               \
     X(ati_targetcount, "ati_targetcount", CONFIG_INPUT_IQS9151_ATI_TARGETCOUNT, 0, 1000,        \
       IQS9151_PARAM_IC_U16, IQS9151_ADDR_TRACKPAD_ATI_TARGET)                                   \
     X(dynamic_filter_bottom_speed, "dynamic_filter_bottom_speed",                               \
@@ -147,7 +154,7 @@ enum iqs9151_param_kind {
     X(f2_pinch_ratio_x10, "2f_pinch_ratio_x10", CONFIG_INPUT_IQS9151_2F_PINCH_RATIO_X10, 5, 50, \
       IQS9151_PARAM_DRIVER, 0)
 
-#define IQS9151_PARAM_IC_COUNT 17
+#define IQS9151_PARAM_IC_COUNT 20
 
 struct iqs9151_params {
 #define IQS9151_PARAM_FIELD(field, name, def, min, max, kind, reg) int32_t field;
