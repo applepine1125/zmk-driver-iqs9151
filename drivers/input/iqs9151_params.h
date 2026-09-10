@@ -186,6 +186,20 @@ void iqs9151_dev_trace_enable(bool enable);
 bool iqs9151_dev_trace_enabled(void);
 
 /*
+ * 実行時計測。iqs9151_work_cb の入口/出口を計測し、reset=true の読み出しで
+ * カウンタを 0 に戻す(次の読み出し区間の計測を始める)。
+ */
+struct iqs9151_stats {
+    uint32_t frame_count;
+    uint32_t frame_max_us;
+    uint32_t frame_avg_us;
+    uint32_t frame_gap_max_ms;
+    uint32_t i2c_errors;
+};
+
+void iqs9151_dev_stats_get(struct iqs9151_stats *out, bool reset);
+
+/*
  * フレームのライブコールバック(第 5b 段)。tp live on|off [hz] で有効化する。
  * 指本数が 0 の間は「0 に変化した瞬間」だけ呼び、指が触れるまで呼ばない。
  * 指本数が 1 以上のときは、指本数/hold/2f モードが変わったフレームは即時、

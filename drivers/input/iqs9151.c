@@ -24,6 +24,78 @@
 
 LOG_MODULE_REGISTER(iqs9151, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 
+/*
+ * フレーム処理を syswq から切り離す専用ワークキュー。複数インスタンスでも
+ * 1 本を共有し、2 台目以降の init では start しない。
+ */
+K_KERNEL_STACK_DEFINE(iqs9151_work_q_stack, CONFIG_INPUT_IQS9151_THREAD_STACK_SIZE);
+static struct k_work_q iqs9151_work_q;
+static bool iqs9151_work_q_started;
+
+static void iqs9151_work_q_ensure_started(void) {
+    if (iqs9151_work_q_started) {
+        return;
+    }
+    k_work_queue_start(&iqs9151_work_q, iqs9151_work_q_stack,
+                       K_KERNEL_STACK_SIZEOF(iqs9151_work_q_stack),
+                       CONFIG_INPUT_IQS9151_THREAD_PRIORITY, NULL);
+    k_thread_name_set(&iqs9151_work_q.thread, "iqs9151");
+    iqs9151_work_q_started = true;
+}
+
+static struct iqs9151_stats iqs9151_stats;
+static uint64_t iqs9151_stats_sum_us;
+static struct k_spinlock iqs9151_stats_lock;
+static int64_t iqs9151_stats_last_frame_ms;
+static uint8_t iqs9151_stats_last_fingers;
+static bool iqs9151_stats_has_last_frame;
+
+static void iqs9151_stats_record_frame(uint32_t elapsed_us, int64_t now_ms,
+                                       uint8_t finger_count) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    iqs9151_stats.frame_count++;
+    if (elapsed_us > iqs9151_stats.frame_max_us) {
+        iqs9151_stats.frame_max_us = elapsed_us;
+    }
+    iqs9151_stats_sum_us += elapsed_us;
+    iqs9151_stats.frame_avg_us = (uint32_t)(iqs9151_stats_sum_us / iqs9151_stats.frame_count);
+
+    if (iqs9151_stats_has_last_frame &&
+        (iqs9151_stats_last_fingers > 0U || finger_count > 0U)) {
+        uint32_t gap_ms = (uint32_t)(now_ms - iqs9151_stats_last_frame_ms);
+
+        if (gap_ms > iqs9151_stats.frame_gap_max_ms) {
+            iqs9151_stats.frame_gap_max_ms = gap_ms;
+        }
+    }
+    iqs9151_stats_last_frame_ms = now_ms;
+    iqs9151_stats_last_fingers = finger_count;
+    iqs9151_stats_has_last_frame = true;
+
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
+static void iqs9151_stats_record_i2c_error(void) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    iqs9151_stats.i2c_errors++;
+
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
+void iqs9151_dev_stats_get(struct iqs9151_stats *out, bool reset) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    *out = iqs9151_stats;
+    if (reset) {
+        memset(&iqs9151_stats, 0, sizeof(iqs9151_stats));
+        iqs9151_stats_sum_us = 0U;
+    }
+
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
 static bool iqs9151_trace_enabled;
 static bool iqs9151_summary_enabled = true;
 static struct {
@@ -458,7 +530,8 @@ static void iqs9151_report_cursor(struct iqs9151_data *data, int16_t rel_x, int1
         iqs9151_cursor_flush(data);
         return;
     }
-    (void)k_work_reschedule(&data->cursor_flush_work, K_MSEC(interval_ms));
+    (void)k_work_reschedule_for_queue(&iqs9151_work_q, &data->cursor_flush_work,
+                                      K_MSEC(interval_ms));
 }
 
 static void iqs9151_scroll_acc_send(struct iqs9151_data *data) {
@@ -519,7 +592,8 @@ static void iqs9151_report_scroll(struct iqs9151_data *data, int16_t scroll_x,
         iqs9151_scroll_flush(data);
         return;
     }
-    (void)k_work_reschedule(&data->scroll_flush_work, K_MSEC(interval_ms));
+    (void)k_work_reschedule_for_queue(&iqs9151_work_q, &data->scroll_flush_work,
+                                      K_MSEC(interval_ms));
 }
 
 static void iqs9151_report_acc_reset(struct iqs9151_data *data) {
@@ -1151,7 +1225,8 @@ static void iqs9151_summary_end_frame(struct iqs9151_data *data,
             s->down_ms = (uint32_t)(now_ms - attempt->first_down_ms);
         }
         attempt->release_ms = now_ms;
-        (void)k_work_reschedule(&data->summary_work, K_MSEC(iqs9151_summary_idle_ms(data)));
+        (void)k_work_reschedule_for_queue(&iqs9151_work_q, &data->summary_work,
+                                          K_MSEC(iqs9151_summary_idle_ms(data)));
     }
 }
 
@@ -1616,8 +1691,8 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         (p->f1_presshold_enable != 0)) {
         data->one_finger_click_pending = true;
         data->one_finger_click_pending_ms = now_ms;
-        k_work_reschedule(&data->one_finger_click_work,
-                          K_MSEC(p->f1_tapdrag_gap_max_ms));
+        k_work_reschedule_for_queue(&iqs9151_work_q, &data->one_finger_click_work,
+                                    K_MSEC(p->f1_tapdrag_gap_max_ms));
     } else if (frame->finger_count != 0U) {
         iqs9151_clear_one_finger_click_pending(data);
         (void)k_work_cancel_delayable(&data->one_finger_click_work);
@@ -1879,8 +1954,8 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
             (p->f2_presshold_enable != 0)) {
             data->two_finger_click_pending = true;
             data->two_finger_click_pending_ms = now_ms;
-            k_work_reschedule(&data->two_finger_click_work,
-                              K_MSEC(p->f2_tapdrag_gap_max_ms));
+            k_work_reschedule_for_queue(&iqs9151_work_q, &data->two_finger_click_work,
+                                        K_MSEC(p->f2_tapdrag_gap_max_ms));
         }
 
         iqs9151_two_finger_reset(state);
@@ -1925,8 +2000,8 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         (p->f2_presshold_enable != 0)) {
         data->two_finger_click_pending = true;
         data->two_finger_click_pending_ms = now_ms;
-        k_work_reschedule(&data->two_finger_click_work,
-                          K_MSEC(p->f2_tapdrag_gap_max_ms));
+        k_work_reschedule_for_queue(&iqs9151_work_q, &data->two_finger_click_work,
+                                    K_MSEC(p->f2_tapdrag_gap_max_ms));
     }
 
     iqs9151_two_finger_reset(state);
@@ -2131,8 +2206,8 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
             (p->f3_presshold_enable != 0)) {
             data->three_finger_click_pending = true;
             data->three_finger_click_pending_ms = now_ms;
-            k_work_reschedule(&data->three_finger_click_work,
-                              K_MSEC(p->f3_tapdrag_gap_max_ms));
+            k_work_reschedule_for_queue(&iqs9151_work_q, &data->three_finger_click_work,
+                                        K_MSEC(p->f3_tapdrag_gap_max_ms));
         }
 
         iqs9151_three_finger_reset(data);
@@ -2175,8 +2250,8 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
         (p->f3_presshold_enable != 0)) {
         data->three_finger_click_pending = true;
         data->three_finger_click_pending_ms = now_ms;
-        k_work_reschedule(&data->three_finger_click_work,
-                          K_MSEC(p->f3_tapdrag_gap_max_ms));
+        k_work_reschedule_for_queue(&iqs9151_work_q, &data->three_finger_click_work,
+                                    K_MSEC(p->f3_tapdrag_gap_max_ms));
     }
 
     iqs9151_three_finger_reset(data);
@@ -2232,7 +2307,7 @@ static void iqs9151_inertia_start(struct iqs9151_inertia_state *state,
     state->elapsed_ms = 0U;
     state->last_ms = k_uptime_get();
     state->active = true;
-    k_work_schedule(work, K_MSEC(params->interval_ms));
+    k_work_schedule_for_queue(&iqs9151_work_q, work, K_MSEC(params->interval_ms));
 }
 
 static bool iqs9151_inertia_step(struct iqs9151_inertia_state *state,
@@ -2315,8 +2390,8 @@ static void iqs9151_inertia_scroll_work_cb(struct k_work *work) {
     }
 
     if (active) {
-        k_work_schedule(&data->inertia_scroll_work,
-                        K_MSEC(data->scroll_params.interval_ms));
+        k_work_schedule_for_queue(&iqs9151_work_q, &data->inertia_scroll_work,
+                                  K_MSEC(data->scroll_params.interval_ms));
     }
 }
 
@@ -2371,8 +2446,8 @@ static void iqs9151_inertia_cursor_work_cb(struct k_work *work) {
     }
 
     if (active) {
-        k_work_schedule(&data->inertia_cursor_work,
-                        K_MSEC(data->cursor_params.interval_ms));
+        k_work_schedule_for_queue(&iqs9151_work_q, &data->inertia_cursor_work,
+                                  K_MSEC(data->cursor_params.interval_ms));
     }
 }
 
@@ -2801,20 +2876,26 @@ static void iqs9151_work_cb(struct k_work *work) {
     struct iqs9151_frame frame;
     int ret;
     const int64_t now_ms = k_uptime_get();
+    const uint32_t start_cycles = k_cycle_get_32();
+    uint8_t finger_count = 0U;
 
     ret = iqs9151_read_frame(cfg, &frame);
     if (ret != 0) {
         LOG_ERR("frame read failed (%d)", ret);
-        return;
+        iqs9151_stats_record_i2c_error();
+    } else {
+        iqs9151_apply_pending_ic(dev);
+        iqs9151_process_frame(data, &frame, now_ms);
+        finger_count = frame.finger_count;
     }
 
-    iqs9151_apply_pending_ic(dev);
-    iqs9151_process_frame(data, &frame, now_ms);
+    iqs9151_stats_record_frame(k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles), now_ms,
+                               finger_count);
 }
 
 static void iqs9151_gpio_cb(const struct device *port, struct gpio_callback *cb, uint32_t pins) {
     struct iqs9151_data *data = CONTAINER_OF(cb, struct iqs9151_data, gpio_cb);
-    k_work_submit(&data->work);
+    k_work_submit_to_queue(&iqs9151_work_q, &data->work);
 }
 
 static int iqs9151_set_interrupt(const struct device *dev, const bool en) {
@@ -3117,6 +3198,7 @@ static int iqs9151_init(const struct device *dev) {
     struct iqs9151_data *data = dev->data;
     int ret;
     data->dev = dev;
+    iqs9151_work_q_ensure_started();
     iqs9151_params_init(&data->params);
     iqs9151_init_inertia_consts(data);
     iqs9151_sync_inertia_params(data);
@@ -3268,6 +3350,7 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
 
     memset(data, 0, sizeof(*data));
     data->dev = dev;
+    iqs9151_work_q_ensure_started();
     iqs9151_params_init(&data->params);
     iqs9151_init_inertia_consts(data);
     iqs9151_sync_inertia_params(data);

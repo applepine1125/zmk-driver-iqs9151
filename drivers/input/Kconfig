@@ -477,6 +477,22 @@ config INPUT_IQS9151_SCROLL_REPORT_INTERVAL_MS
       and sent as one report. 0 sends a report for every frame. Try 16
       to 25 when reports pile up on a BLE link.
 
+config INPUT_IQS9151_THREAD_PRIORITY
+    int "IQS9151 dedicated work queue thread priority"
+    default 2
+    help
+      Priority of the driver's dedicated work queue thread, which runs
+      frame processing off the system work queue. Keep it lower priority
+      (higher numeric value) than the system work queue (-1) and the ZMK
+      input thread (0), but higher priority (lower numeric value) than
+      the BLE/split TX thread (5).
+
+config INPUT_IQS9151_THREAD_STACK_SIZE
+    int "IQS9151 dedicated work queue thread stack size"
+    default 3072
+    help
+      Stack size in bytes for the driver's dedicated work queue thread.
+
 config INPUT_IQS9151_SHELL
     bool "IQS9151 tp shell command"
     depends on SHELL

@@ -286,4 +286,74 @@ ZTEST_F(iqs9151_cmd, test_live_on_with_out_of_range_hz_reports_erange) {
                   fixture->log.lines[0]);
 }
 
+/* stats はワークキュー処理がないこのテストでは常に 0 のまま、reset しても変わらない */
+ZTEST_F(iqs9151_cmd, test_stats_reports_zero_counts_by_default) {
+    int ret = run(fixture, "stats");
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(fixture->log.count, 1U, NULL);
+    zassert_equal(strcmp(fixture->log.lines[0],
+                         "stats frame_n=0 frame_max_us=0 frame_avg_us=0 frame_gap_max_ms=0 "
+                         "i2c_err=0"),
+                  0, "line=%s", fixture->log.lines[0]);
+}
+
+/* stats noreset も同じ書式を返す(このテストでは reset の有無で見た目の差は出ない) */
+ZTEST_F(iqs9151_cmd, test_stats_noreset_reports_same_format) {
+    int ret = run(fixture, "stats noreset");
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(fixture->log.count, 1U, NULL);
+    zassert_equal(strcmp(fixture->log.lines[0],
+                         "stats frame_n=0 frame_max_us=0 frame_avg_us=0 frame_gap_max_ms=0 "
+                         "i2c_err=0"),
+                  0, "line=%s", fixture->log.lines[0]);
+}
+
+/* stats の未知引数は ERR usage を返す */
+ZTEST_F(iqs9151_cmd, test_stats_unknown_arg_reports_usage_error) {
+    int ret = run(fixture, "stats bogus");
+
+    zassert_equal(ret, -EINVAL, "ret=%d", ret);
+    zassert_equal(strcmp(fixture->log.lines[0], "ERR usage: stats [noreset]"), 0, "line=%s",
+                  fixture->log.lines[0]);
+}
+
+static void stats_hook_record(iqs9151_cmd_out_t out, void *ctx, bool reset) {
+    out(ctx, reset ? "hook reset=1" : "hook reset=0");
+}
+
+/* 登録したフックは stats 行の後に呼ばれ、reset の有無をそのまま受け取る */
+ZTEST_F(iqs9151_cmd, test_stats_calls_registered_hook_with_reset_flag) {
+    int ret;
+
+    iqs9151_cmd_set_stats_hook(stats_hook_record);
+
+    ret = run(fixture, "stats");
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(fixture->log.count, 2U, NULL);
+    zassert_equal(strcmp(fixture->log.lines[1], "hook reset=1"), 0, "line=%s",
+                  fixture->log.lines[1]);
+
+    ret = run(fixture, "stats noreset");
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(fixture->log.count, 2U, NULL);
+    zassert_equal(strcmp(fixture->log.lines[1], "hook reset=0"), 0, "line=%s",
+                  fixture->log.lines[1]);
+
+    iqs9151_cmd_set_stats_hook(NULL);
+}
+
+/* フックを解除すると stats 行だけに戻る */
+ZTEST_F(iqs9151_cmd, test_stats_without_hook_reports_single_line) {
+    int ret;
+
+    iqs9151_cmd_set_stats_hook(stats_hook_record);
+    iqs9151_cmd_set_stats_hook(NULL);
+
+    ret = run(fixture, "stats");
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(fixture->log.count, 1U, NULL);
+}
+
 ZTEST_SUITE(iqs9151_cmd, NULL, iqs9151_cmd_setup, iqs9151_cmd_before, NULL, NULL);

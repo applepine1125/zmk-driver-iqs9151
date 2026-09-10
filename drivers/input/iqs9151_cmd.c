@@ -255,6 +255,35 @@ static int cmd_live(size_t argc, char **argv, iqs9151_cmd_out_t out, void *ctx) 
     return -EINVAL;
 }
 
+static iqs9151_cmd_stats_hook_t iqs9151_cmd_stats_hook;
+
+void iqs9151_cmd_set_stats_hook(iqs9151_cmd_stats_hook_t hook) {
+    iqs9151_cmd_stats_hook = hook;
+}
+
+static int cmd_stats(size_t argc, char **argv, iqs9151_cmd_out_t out, void *ctx) {
+    struct iqs9151_stats stats;
+    bool reset = true;
+
+    if (argc == 2 && strcmp(argv[1], "noreset") == 0) {
+        reset = false;
+    } else if (argc != 1) {
+        cmd_out(out, ctx, "ERR usage: stats [noreset]");
+        return -EINVAL;
+    }
+
+    iqs9151_dev_stats_get(&stats, reset);
+    cmd_out(out, ctx,
+            "stats frame_n=%u frame_max_us=%u frame_avg_us=%u frame_gap_max_ms=%u i2c_err=%u",
+            (unsigned int)stats.frame_count, (unsigned int)stats.frame_max_us,
+            (unsigned int)stats.frame_avg_us, (unsigned int)stats.frame_gap_max_ms,
+            (unsigned int)stats.i2c_errors);
+    if (iqs9151_cmd_stats_hook != NULL) {
+        iqs9151_cmd_stats_hook(out, ctx, reset);
+    }
+    return 0;
+}
+
 int iqs9151_cmd_exec_argv(const struct device *dev, size_t argc, char **argv, iqs9151_cmd_out_t out,
                           void *ctx) {
     const char *sub;
@@ -294,6 +323,9 @@ int iqs9151_cmd_exec_argv(const struct device *dev, size_t argc, char **argv, iq
     }
     if (strcmp(sub, "live") == 0) {
         return cmd_live(argc, argv, out, ctx);
+    }
+    if (strcmp(sub, "stats") == 0) {
+        return cmd_stats(argc, argv, out, ctx);
     }
     cmd_out(out, ctx, "ERR unknown command %s", sub);
     return -ENOENT;
