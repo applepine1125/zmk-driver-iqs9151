@@ -196,6 +196,8 @@ struct iqs9151_stats {
     uint32_t frame_gap_max_ms;
     uint32_t i2c_errors;
     uint32_t i2c_max_us;       /* フレーム読み出し(I2C)単体の最大時間 */
+    uint32_t show_reset_count; /* IC の SHOW_RESET を検出して状態を初期化した回数 */
+    uint32_t frame_cpu_max_us; /* フレーム処理が実際に CPU を使った最大時間(THREAD_RUNTIME_STATS 有効時) */
 };
 
 void iqs9151_dev_stats_get(struct iqs9151_stats *out, bool reset);
