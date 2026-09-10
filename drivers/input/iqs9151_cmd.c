@@ -273,12 +273,13 @@ static int cmd_stats(size_t argc, char **argv, iqs9151_cmd_out_t out, void *ctx)
     }
 
     iqs9151_dev_stats_get(&stats, reset);
-    cmd_out(out, ctx,
-            "stats frame_n=%u frame_max_us=%u frame_avg_us=%u frame_gap_max_ms=%u i2c_err=%u i2c_max_us=%u reset_n=%u cpu_max_us=%u",
+    cmd_out(out, ctx, "stats frame_n=%u frame_max_us=%u frame_avg_us=%u frame_gap_max_ms=%u i2c_err=%u",
             (unsigned int)stats.frame_count, (unsigned int)stats.frame_max_us,
             (unsigned int)stats.frame_avg_us, (unsigned int)stats.frame_gap_max_ms,
-            (unsigned int)stats.i2c_errors, (unsigned int)stats.i2c_max_us,
-            (unsigned int)stats.show_reset_count, (unsigned int)stats.frame_cpu_max_us);
+            (unsigned int)stats.i2c_errors);
+    cmd_out(out, ctx, "stats i2c_max_us=%u reset_n=%u cpu_max_us=%u rdy_miss=%u",
+            (unsigned int)stats.i2c_max_us, (unsigned int)stats.show_reset_count,
+            (unsigned int)stats.frame_cpu_max_us, (unsigned int)stats.rdy_miss);
     if (iqs9151_cmd_stats_hook != NULL) {
         iqs9151_cmd_stats_hook(out, ctx, reset);
     }

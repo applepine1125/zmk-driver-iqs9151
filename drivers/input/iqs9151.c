@@ -96,6 +96,20 @@ static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, uin
     k_spin_unlock(&iqs9151_stats_lock, key);
 }
 
+static void iqs9151_stats_record_rdy_miss(void) {
+    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
+
+    iqs9151_stats.rdy_miss++;
+    k_spin_unlock(&iqs9151_stats_lock, key);
+}
+
+/* k_cycle_get_32 の差分が異常(10 秒超)なら計測ミスとして捨てる */
+static uint32_t iqs9151_cycles_to_us(uint32_t delta_cycles) {
+    uint32_t us = k_cyc_to_us_floor32(delta_cycles);
+
+    return us > 10000000U ? 0U : us;
+}
+
 static void iqs9151_stats_record_show_reset(void) {
     k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
 
@@ -2909,8 +2923,11 @@ static void iqs9151_work_cb(struct k_work *work) {
     uint32_t i2c_us;
     uint8_t finger_count = 0U;
 
+    if (!gpio_pin_get_dt(&cfg->irq_gpio)) {
+        iqs9151_stats_record_rdy_miss();
+    }
     ret = iqs9151_read_frame(cfg, &frame);
-    i2c_us = k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles);
+    i2c_us = iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles);
     if (ret != 0) {
         LOG_ERR("frame read failed (%d)", ret);
         iqs9151_stats_record_i2c_error();
@@ -2921,8 +2938,8 @@ static void iqs9151_work_cb(struct k_work *work) {
     }
 
     iqs9151_stats_record_frame(
-        k_cyc_to_us_floor32(k_cycle_get_32() - start_cycles), i2c_us,
-        k_cyc_to_us_floor32((uint32_t)(iqs9151_thread_cycles() - start_thread_cycles)), now_ms,
+        iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles), i2c_us,
+        iqs9151_cycles_to_us((uint32_t)(iqs9151_thread_cycles() - start_thread_cycles)), now_ms,
         finger_count);
 }
 

@@ -198,6 +198,7 @@ struct iqs9151_stats {
     uint32_t i2c_max_us;       /* フレーム読み出し(I2C)単体の最大時間 */
     uint32_t show_reset_count; /* IC の SHOW_RESET を検出して状態を初期化した回数 */
     uint32_t frame_cpu_max_us; /* フレーム処理が実際に CPU を使った最大時間(THREAD_RUNTIME_STATS 有効時) */
+    uint32_t rdy_miss;         /* フレーム読み出し開始時に RDY が非アクティブだった回数(通信窓を外すとクロックストレッチで待つ) */
 };
 
 void iqs9151_dev_stats_get(struct iqs9151_stats *out, bool reset);
