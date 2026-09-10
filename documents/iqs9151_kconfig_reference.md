@@ -125,7 +125,7 @@ IC レジスタ系(`tp list` の kind が `ic_u8` / `ic_u16`)は次のフレー�
     tp live on|off [hz]      フレームごとの T F 相当の情報を間引いてコールバックへ渡す(既定 off、hz 省略時 60)
 
 `tp trace` / `tp summary` の出力を見るには、ビルド時に `CONFIG_INPUT_IQS9151_LOG_LEVEL` を 3 (INF) 以上にしておく必要がある。
-`tp live` は LOG 出力ではなく `iqs9151_dev_set_frame_callback(cb, user_data)` で登録したコールバック(`struct iqs9151_frame_info`、`iqs9151_params.h`)を呼ぶための機能で、tp-tuner のリアルタイム表示など向け。`on` は hz(1..100、既定 `IQS9151_LIVE_HZ_DEFAULT`=60)を指定でき、`OK live=on hz=<n>` を返す。省略や範囲外の値は `ERR hz 1..100` になる。`off` は `OK live=off` を返し、間引き状態(直前に呼んだ指本数/hold/2f モード/時刻)をリセットする。間引き規則は、指本数・`hold`・`2f_mode` のいずれかが前回コールバック時から変わっていれば毎回呼び、変わっていなければ前回から `1000/hz` ms 以上経過したフレームだけ呼ぶ。`tp trace` の `T F` 行の出力そのものは変えない。
+`tp live` は LOG 出力ではなく `iqs9151_dev_set_frame_callback(cb, user_data)` で登録したコールバック(`struct iqs9151_frame_info`、`iqs9151_params.h`)を呼ぶための機能で、tp-tuner のリアルタイム表示など向け。`on` は hz(1..100、既定 `IQS9151_LIVE_HZ_DEFAULT`=60)を指定でき、`OK live=on hz=<n>` を返す。省略や範囲外の値は `ERR hz 1..100` になる。`off` は `OK live=off` を返し、間引き状態(直前に呼んだ指本数/hold/2f モード/時刻)をリセットする。間引き規則は、指本数が 0 の間は「0 に変化した瞬間」だけ呼び、指が触れるまで呼ばない。指本数が 1 以上のときは、指本数・`hold`・`2f_mode` のいずれかが前回コールバック時から変わっていれば毎回呼び、変わっていなければ前回から `1000/hz` ms 以上経過したフレームだけ呼ぶ。`tp trace` の `T F` 行の出力そのものは変えない。
 `T F` 行では、2本指セッションが終わるフレームで `2f_mode` が 0 になる。
 
 ### 試行要約(T S)

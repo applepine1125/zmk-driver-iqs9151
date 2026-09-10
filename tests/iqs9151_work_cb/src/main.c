@@ -2172,6 +2172,34 @@ ZTEST_F(iqs9151_work_cb, test_live_always_calls_on_finger_count_change) {
     zassert_equal(fixture->frames.items[1].ms, 1U, NULL);
 }
 
+/* 指を離した 0 本指フレームは 1 回だけ呼ばれ、続く 0 本指フレームは間隔が経っても
+ * 呼ばれず、再び触れると呼ばれる */
+ZTEST_F(iqs9151_work_cb, test_live_calls_zero_fingers_once_until_touch_resumes) {
+    const struct iqs9151_test_frame one = make_one_finger_down_frame(100, 100);
+    const struct iqs9151_test_frame zero = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    int ret = iqs9151_dev_live_enable(true, 50);
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+
+    iqs9151_test_process_frame(fixture->ctx, &one, 0);
+    iqs9151_test_process_frame(fixture->ctx, &zero, 1);
+    iqs9151_test_process_frame(fixture->ctx, &zero, 21);
+    iqs9151_test_process_frame(fixture->ctx, &zero, 41);
+
+    zassert_equal(fixture->frames.count, 2U, "count=%u",
+                  (unsigned int)fixture->frames.count);
+    zassert_equal(fixture->frames.items[0].fingers, 1U, NULL);
+    zassert_equal(fixture->frames.items[1].fingers, 0U, NULL);
+    zassert_equal(fixture->frames.items[1].ms, 1U, NULL);
+
+    iqs9151_test_process_frame(fixture->ctx, &one, 61);
+
+    zassert_equal(fixture->frames.count, 3U, "count=%u",
+                  (unsigned int)fixture->frames.count);
+    zassert_equal(fixture->frames.items[2].fingers, 1U, NULL);
+    zassert_equal(fixture->frames.items[2].ms, 61U, NULL);
+}
+
 /* live off ではフレームコールバックが呼ばれない */
 ZTEST_F(iqs9151_work_cb, test_live_off_does_not_call_frame_hook) {
     const struct iqs9151_test_frame frame = make_one_finger_down_frame(100, 100);

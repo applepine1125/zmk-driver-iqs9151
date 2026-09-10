@@ -91,7 +91,11 @@ uint16_t iqs9151_dev_live_hz(void) {
     return iqs9151_live_hz;
 }
 
-/* 指本数/hold/2f モードが変わったフレームは即時、それ以外は 1000/hz ms 間隔で間引いて呼ぶ */
+/*
+ * 指本数が 0 の間は「0 に変化した瞬間」だけ呼び、指が触れるまで呼ばない。
+ * 指本数が 1 以上のときは、指本数/hold/2f モードが変わったフレームは即時、
+ * それ以外は 1000/hz ms 間隔で間引いて呼ぶ。
+ */
 static void iqs9151_live_notify(const struct iqs9151_frame_info *finfo, int64_t now_ms) {
     bool should_call;
 
@@ -99,7 +103,9 @@ static void iqs9151_live_notify(const struct iqs9151_frame_info *finfo, int64_t 
         return;
     }
 
-    if (!iqs9151_live_throttle.has_last ||
+    if (finfo->fingers == 0U) {
+        should_call = !iqs9151_live_throttle.has_last || iqs9151_live_throttle.last_fingers != 0U;
+    } else if (!iqs9151_live_throttle.has_last ||
         finfo->fingers != iqs9151_live_throttle.last_fingers ||
         finfo->hold != iqs9151_live_throttle.last_hold ||
         finfo->mode2f != iqs9151_live_throttle.last_mode2f) {
