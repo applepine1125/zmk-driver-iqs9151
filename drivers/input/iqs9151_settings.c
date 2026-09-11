@@ -1,4 +1,5 @@
 #include <zephyr/device.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/byteorder.h>
@@ -22,6 +23,12 @@ LOG_MODULE_REGISTER(iqs9151_settings, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 static const struct device *iqs9151_settings_dev = DEVICE_DT_GET_ANY(azoteq_iqs9151);
 static bool iqs9151_settings_loaded_flag;
 
+/* settings_load() は main スレッド(既定 1KB のスタック)で走るため、ブロブと作業用の
+ * パラメータ構造体はスタックに置かず静的領域で持ち、読み込みと保存を mutex で直列化する */
+static K_MUTEX_DEFINE(iqs9151_settings_lock);
+static uint8_t iqs9151_settings_buf[IQS9151_SETTINGS_BLOB_SIZE];
+static struct iqs9151_params iqs9151_settings_work;
+
 int iqs9151_settings_encode(const struct iqs9151_params *p, uint8_t *buf, size_t len) {
     const size_t count = iqs9151_param_count();
     const size_t needed = IQS9151_SETTINGS_HEADER_SIZE + 4U * count;
@@ -40,7 +47,6 @@ int iqs9151_settings_encode(const struct iqs9151_params *p, uint8_t *buf, size_t
 
 int iqs9151_settings_decode(const uint8_t *buf, size_t len, struct iqs9151_params *p) {
     const size_t count = iqs9151_param_count();
-    struct iqs9151_params tmp;
 
     if (len < IQS9151_SETTINGS_HEADER_SIZE) {
         return -EINVAL;
@@ -51,10 +57,9 @@ int iqs9151_settings_decode(const uint8_t *buf, size_t len, struct iqs9151_param
         return -EINVAL;
     }
     for (size_t i = 0; i < count; i++) {
-        *(int32_t *)((uint8_t *)&tmp + iqs9151_param_def_at(i)->offset) =
+        *(int32_t *)((uint8_t *)p + iqs9151_param_def_at(i)->offset) =
             (int32_t)sys_get_le32(&buf[IQS9151_SETTINGS_HEADER_SIZE + 4U * i]);
     }
-    *p = tmp;
     return 0;
 }
 
@@ -73,46 +78,42 @@ static void iqs9151_settings_apply(const struct device *dev, const struct iqs915
 static int iqs9151_settings_set(const char *name, size_t len, settings_read_cb read_cb,
                                 void *cb_arg) {
     const char *next;
-    uint8_t buf[IQS9151_SETTINGS_BLOB_SIZE];
-    struct iqs9151_params params;
     ssize_t read_len;
 
     if (!settings_name_steq(name, IQS9151_SETTINGS_KEY, &next) || next != NULL) {
         return -ENOENT;
     }
-    if (len > sizeof(buf)) {
+    if (len > sizeof(iqs9151_settings_buf)) {
         LOG_WRN("saved params ignored: len %u > %u", (unsigned int)len,
-                (unsigned int)sizeof(buf));
-        return 0;
-    }
-    read_len = read_cb(cb_arg, buf, len);
-    if (read_len < 0 || (size_t)read_len != len) {
-        LOG_WRN("saved params read failed (%d)", (int)read_len);
-        return 0;
-    }
-    if (iqs9151_settings_decode(buf, len, &params) != 0) {
-        LOG_WRN("saved params ignored: version/count mismatch");
+                (unsigned int)sizeof(iqs9151_settings_buf));
         return 0;
     }
     if (iqs9151_settings_dev == NULL) {
         LOG_WRN("saved params ignored: no device");
         return 0;
     }
-    iqs9151_settings_apply(iqs9151_settings_dev, &params);
-    iqs9151_settings_loaded_flag = true;
-    LOG_INF("saved params applied");
+    k_mutex_lock(&iqs9151_settings_lock, K_FOREVER);
+    read_len = read_cb(cb_arg, iqs9151_settings_buf, len);
+    if (read_len < 0 || (size_t)read_len != len) {
+        LOG_WRN("saved params read failed (%d)", (int)read_len);
+    } else if (iqs9151_settings_decode(iqs9151_settings_buf, len, &iqs9151_settings_work) != 0) {
+        LOG_WRN("saved params ignored: version/count mismatch");
+    } else {
+        iqs9151_settings_apply(iqs9151_settings_dev, &iqs9151_settings_work);
+        iqs9151_settings_loaded_flag = true;
+        LOG_INF("saved params applied");
+    }
+    k_mutex_unlock(&iqs9151_settings_lock);
     return 0;
 }
 
 SETTINGS_STATIC_HANDLER_DEFINE(iqs9151, "iqs9151", NULL, iqs9151_settings_set, NULL, NULL);
 
-int iqs9151_settings_save(const struct device *dev) {
-    uint8_t buf[IQS9151_SETTINGS_BLOB_SIZE];
-    struct iqs9151_params params;
+static int iqs9151_settings_save_locked(const struct device *dev) {
     int len;
     int ret;
 
-    iqs9151_params_init(&params);
+    iqs9151_params_init(&iqs9151_settings_work);
     for (size_t i = 0; i < iqs9151_param_count(); i++) {
         const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
         int32_t value = 0;
@@ -121,21 +122,29 @@ int iqs9151_settings_save(const struct device *dev) {
         if (ret != 0) {
             return ret;
         }
-        ret = iqs9151_params_set(&params, def, value);
+        ret = iqs9151_params_set(&iqs9151_settings_work, def, value);
         if (ret != 0) {
             return ret;
         }
     }
-    len = iqs9151_settings_encode(&params, buf, sizeof(buf));
+    len = iqs9151_settings_encode(&iqs9151_settings_work, iqs9151_settings_buf,
+                                  sizeof(iqs9151_settings_buf));
     if (len < 0) {
         return len;
     }
-    ret = settings_save_one(IQS9151_SETTINGS_PATH, buf, (size_t)len);
+    ret = settings_save_one(IQS9151_SETTINGS_PATH, iqs9151_settings_buf, (size_t)len);
     if (ret != 0) {
         return ret;
     }
     iqs9151_settings_loaded_flag = true;
     return 0;
+}
+
+int iqs9151_settings_save(const struct device *dev) {
+    k_mutex_lock(&iqs9151_settings_lock, K_FOREVER);
+    const int ret = iqs9151_settings_save_locked(dev);
+    k_mutex_unlock(&iqs9151_settings_lock);
+    return ret;
 }
 
 int iqs9151_settings_clear(void) {
