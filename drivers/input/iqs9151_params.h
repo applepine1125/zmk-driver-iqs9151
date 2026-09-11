@@ -204,13 +204,8 @@ struct iqs9151_stats {
     uint32_t i2c_errors;
     uint32_t i2c_max_us;       /* フレーム読み出し(I2C)単体の最大時間 */
     uint32_t show_reset_count; /* IC の SHOW_RESET を検出して状態を初期化した回数 */
-    uint32_t frame_cpu_max_us; /* フレーム処理が実際に CPU を使った最大時間(THREAD_RUNTIME_STATS 有効時) */
     uint32_t rdy_miss;         /* フレーム読み出し開始時に RDY が非アクティブだった回数(通信窓を外すとクロックストレッチで待つ) */
-    uint32_t isr_count;        /* RDY 割り込みの回数 */
-    uint32_t isr_rdy_low;      /* 割り込み時点で RDY がアクティブだった回数 */
-    uint32_t isr_to_read_max_us; /* 割り込みから読み出し開始までの最大時間 */
     uint32_t i2c_avg_us;       /* フレーム読み出しの平均時間 */
-    uint32_t i2c_all_max_us;   /* フレーム work 内の全 I2C 送受信の合計時間の最大 */
     uint32_t end_comms_errors; /* 通信窓を閉じるコマンドの失敗回数 */
 };
 

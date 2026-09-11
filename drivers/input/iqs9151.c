@@ -46,31 +46,14 @@ static void iqs9151_work_q_ensure_started(void) {
 static struct iqs9151_stats iqs9151_stats;
 static uint64_t iqs9151_stats_sum_us;
 static uint64_t iqs9151_stats_i2c_sum_us;
-static uint32_t iqs9151_last_isr_cycles;
 static struct k_spinlock iqs9151_stats_lock;
 static int64_t iqs9151_stats_last_frame_ms;
 static uint8_t iqs9151_stats_last_fingers;
 static bool iqs9151_stats_has_last_frame;
 
-/* スレッドの実行サイクル(THREAD_RUNTIME_STATS)。無効なら 0 */
-static uint64_t iqs9151_thread_cycles(void) {
-#if defined(CONFIG_THREAD_RUNTIME_STATS)
-    k_thread_runtime_stats_t rt;
-
-    if (k_thread_runtime_stats_get(k_current_get(), &rt) == 0) {
-        return rt.execution_cycles;
-    }
-#endif
-    return 0;
-}
-
-static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, uint32_t cpu_us,
-                                       int64_t now_ms, uint8_t finger_count) {
+static void iqs9151_stats_record_frame(uint32_t elapsed_us, uint32_t i2c_us, int64_t now_ms,
+                                       uint8_t finger_count) {
     k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
-
-    if (cpu_us > iqs9151_stats.frame_cpu_max_us) {
-        iqs9151_stats.frame_cpu_max_us = cpu_us;
-    }
 
     if (i2c_us > iqs9151_stats.i2c_max_us) {
         iqs9151_stats.i2c_max_us = i2c_us;
@@ -113,25 +96,6 @@ static uint32_t iqs9151_cycles_to_us(uint32_t delta_cycles) {
         return 0U;
     }
     return k_cyc_to_us_floor32(delta_cycles);
-}
-
-static void iqs9151_stats_record_isr_latency(uint32_t read_start_cycles) {
-    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
-    uint32_t us = iqs9151_cycles_to_us(read_start_cycles - iqs9151_last_isr_cycles);
-
-    if (us > iqs9151_stats.isr_to_read_max_us) {
-        iqs9151_stats.isr_to_read_max_us = us;
-    }
-    k_spin_unlock(&iqs9151_stats_lock, key);
-}
-
-static void iqs9151_stats_record_i2c_all(uint32_t us) {
-    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
-
-    if (us > iqs9151_stats.i2c_all_max_us) {
-        iqs9151_stats.i2c_all_max_us = us;
-    }
-    k_spin_unlock(&iqs9151_stats_lock, key);
 }
 
 static void iqs9151_stats_record_end_comms_error(void) {
@@ -931,7 +895,7 @@ static void iqs9151_sync_inertia_params(struct iqs9151_data *data) {
     data->cursor_gate.min_avg_speed = (int16_t)p->cursor_inertia_min_avg_speed;
 }
 
-static int iqs9151_i2c_write_raw(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
+static int iqs9151_i2c_write(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
     uint8_t tx[2 + IQS9151_I2C_CHUNK_SIZE];
 
     if (len > (sizeof(tx) - 2)) {
@@ -943,43 +907,22 @@ static int iqs9151_i2c_write_raw(const struct iqs9151_config *cfg, uint16_t reg,
     return i2c_write_dt(&cfg->i2c, tx, len + 2);
 }
 
-static int iqs9151_i2c_read_raw(const struct iqs9151_config *cfg, uint16_t reg, uint8_t *buf, size_t len) {
+static int iqs9151_i2c_read(const struct iqs9151_config *cfg, uint16_t reg, uint8_t *buf, size_t len) {
     uint8_t addr_buf[2];
 
     sys_put_le16(reg, addr_buf);
     return i2c_write_read_dt(&cfg->i2c, addr_buf, sizeof(addr_buf), buf, len);
 }
 
-/* フレーム work 内の全 I2C 時間を積算する(ドライバスレッドからしか呼ばれない) */
-static uint32_t iqs9151_i2c_acc_us;
-
-static int iqs9151_i2c_write(const struct iqs9151_config *cfg, uint16_t reg, const uint8_t *buf, size_t len) {
-    uint32_t start = k_cycle_get_32();
-    int ret = iqs9151_i2c_write_raw(cfg, reg, buf, len);
-
-    iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
-    return ret;
-}
-
-static int iqs9151_i2c_read(const struct iqs9151_config *cfg, uint16_t reg, uint8_t *buf, size_t len) {
-    uint32_t start = k_cycle_get_32();
-    int ret = iqs9151_i2c_read_raw(cfg, reg, buf, len);
-
-    iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
-    return ret;
-}
-
 /* 通信窓を閉じる(HOLD_COMMS_WINDOW 時)。レジスタアドレス無しで 0xEE 0xEE を書く */
 static int iqs9151_end_comms(const struct iqs9151_config *cfg) {
     static const uint8_t cmd[2] = {0xEE, 0xEE};
-    uint32_t start = k_cycle_get_32();
     int ret;
 
     if (!IS_ENABLED(CONFIG_INPUT_IQS9151_HOLD_COMMS_WINDOW)) {
         return 0;
     }
     ret = i2c_write_dt(&cfg->i2c, cmd, sizeof(cmd));
-    iqs9151_i2c_acc_us += iqs9151_cycles_to_us(k_cycle_get_32() - start);
     if (ret != 0) {
         iqs9151_stats_record_end_comms_error();
     }
@@ -2987,16 +2930,13 @@ static void iqs9151_work_cb(struct k_work *work) {
     int ret;
     const int64_t now_ms = k_uptime_get();
     const uint32_t start_cycles = k_cycle_get_32();
-    const uint64_t start_thread_cycles = iqs9151_thread_cycles();
     uint32_t i2c_us;
 
-    iqs9151_i2c_acc_us = 0U;
     uint8_t finger_count = 0U;
 
     if (!gpio_pin_get_dt(&cfg->irq_gpio)) {
         iqs9151_stats_record_rdy_miss();
     }
-    iqs9151_stats_record_isr_latency(start_cycles);
     ret = iqs9151_read_frame(cfg, &frame);
     i2c_us = iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles);
     if (ret != 0) {
@@ -3012,24 +2952,13 @@ static void iqs9151_work_cb(struct k_work *work) {
         finger_count = frame.finger_count;
     }
 
-    iqs9151_stats_record_i2c_all(iqs9151_i2c_acc_us);
-    iqs9151_stats_record_frame(
-        iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles), i2c_us,
-        iqs9151_cycles_to_us((uint32_t)(iqs9151_thread_cycles() - start_thread_cycles)), now_ms,
-        finger_count);
+    iqs9151_stats_record_frame(iqs9151_cycles_to_us(k_cycle_get_32() - start_cycles), i2c_us,
+                               now_ms, finger_count);
 }
 
 static void iqs9151_gpio_cb(const struct device *port, struct gpio_callback *cb, uint32_t pins) {
     struct iqs9151_data *data = CONTAINER_OF(cb, struct iqs9151_data, gpio_cb);
-    const struct iqs9151_config *cfg = data->dev->config;
-    k_spinlock_key_t key = k_spin_lock(&iqs9151_stats_lock);
 
-    iqs9151_stats.isr_count++;
-    if (gpio_pin_get_dt(&cfg->irq_gpio)) {
-        iqs9151_stats.isr_rdy_low++;
-    }
-    iqs9151_last_isr_cycles = k_cycle_get_32();
-    k_spin_unlock(&iqs9151_stats_lock, key);
     k_work_submit_to_queue(&iqs9151_work_q, &data->work);
 }
 
