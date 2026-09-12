@@ -7,10 +7,9 @@
 
 ZTEST_SUITE(iqs9151_params, NULL, NULL, NULL, NULL, NULL);
 
-/* 定義テーブルは54個で、IC系17個が先頭にあるとき、種別が位置と一致する */
+/* 定義テーブルは61個で、IC系17個が先頭にあるとき、種別が位置と一致する */
 ZTEST(iqs9151_params, test_table_has_54_params_ic_first) {
-    zassert_equal(iqs9151_param_count(), 57U, "count=%u",
-                  (unsigned int)iqs9151_param_count());
+    zassert_equal(iqs9151_param_count(), 61U, "count=%u", (unsigned int)iqs9151_param_count());
     for (size_t i = 0; i < iqs9151_param_count(); i++) {
         const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
 

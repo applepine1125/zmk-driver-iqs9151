@@ -315,12 +315,12 @@ ZTEST_F(iqs9151_settings, test_tp_info_reports_saved_flag) {
     const char *out;
 
     out = run_tp("tp info");
-    zassert_not_null(strstr(out, "params=57 saved=no"), "out=%s", out);
+    zassert_not_null(strstr(out, "params=61 saved=no"), "out=%s", out);
 
     zassert_equal(iqs9151_settings_save(dev), 0, NULL);
 
     out = run_tp("tp info");
-    zassert_not_null(strstr(out, "params=57 saved=yes"), "out=%s", out);
+    zassert_not_null(strstr(out, "params=61 saved=yes"), "out=%s", out);
 }
 
 ZTEST_SUITE(iqs9151_settings, NULL, iqs9151_settings_setup, iqs9151_settings_before, NULL, NULL);

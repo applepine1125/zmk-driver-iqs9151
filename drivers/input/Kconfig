@@ -357,6 +357,44 @@ config INPUT_IQS9151_2F_SCROLL_START_MOVE
     help
       Movement threshold to start 2F scroll mode (driver-side).
 
+config INPUT_IQS9151_2F_SCROLL_SLOW_SPEED
+    int "IQS9151 two-finger scroll slow-speed threshold"
+    range 0 500
+    default 4
+    help
+      Per-frame centroid movement (counts) at or below which 2F scroll
+      is considered slow and INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100 is
+      applied (driver-side).
+
+config INPUT_IQS9151_2F_SCROLL_FAST_SPEED
+    int "IQS9151 two-finger scroll fast-speed threshold"
+    range 0 500
+    default 40
+    help
+      Per-frame centroid movement (counts) at or above which 2F scroll
+      is considered fast and INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100 is
+      applied (driver-side).
+
+config INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100
+    int "IQS9151 two-finger scroll slow-speed gain (x100)"
+    range 0 400
+    default 100
+    help
+      Gain applied to 2F scroll output at or below the slow-speed
+      threshold (100 = 1.0x). Between the slow and fast thresholds the
+      gain is linearly interpolated. This multiplies the devicetree
+      zip_scroll_accel_* curve rather than replacing it.
+
+config INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100
+    int "IQS9151 two-finger scroll fast-speed gain (x100)"
+    range 0 400
+    default 100
+    help
+      Gain applied to 2F scroll output at or above the fast-speed
+      threshold (100 = 1.0x). Between the slow and fast thresholds the
+      gain is linearly interpolated. This multiplies the devicetree
+      zip_scroll_accel_* curve rather than replacing it.
+
 config INPUT_IQS9151_SCROLL_INERTIA_ENABLE
     bool "IQS9151 scroll inertia enable"
     default y

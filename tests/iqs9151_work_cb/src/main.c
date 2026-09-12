@@ -1800,6 +1800,136 @@ ZTEST_F(iqs9151_work_cb, test_scroll_report_interval_16_coalesces_wheel_until_in
     assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -10 * (accumulated + 1), true);
 }
 
+/* ゲインが 100% のとき、2F スクロールすると量がこれまでと変わらない */
+ZTEST_F(iqs9151_work_cb, test_2f_scroll_gain_100_percent_keeps_amount_unchanged) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame entry = make_two_finger_frame(160);
+
+    set_driver_param(fixture, "2f_scroll_slow_gain_x100", 100);
+    set_driver_param(fixture, "2f_scroll_fast_gain_x100", 100);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &entry, 10);
+
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_HWHEEL, -60, true);
+}
+
+/* 速度がゆっくりのしきい値以下のとき、2F スクロールすると slow gain が掛かった量になる */
+ZTEST_F(iqs9151_work_cb, test_2f_scroll_speed_at_or_below_slow_speed_applies_slow_gain) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame entry = make_two_finger_frame(160);
+    const struct iqs9151_test_frame slow_move = make_two_finger_frame(168);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &entry, 10);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+
+    set_driver_param(fixture, "2f_scroll_slow_speed", 10);
+    set_driver_param(fixture, "2f_scroll_fast_speed", 40);
+    set_driver_param(fixture, "2f_scroll_slow_gain_x100", 50);
+    set_driver_param(fixture, "2f_scroll_fast_gain_x100", 100);
+
+    iqs9151_test_process_frame(fixture->ctx, &slow_move, 20);
+
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -4, true);
+}
+
+/* 速度が速いしきい値以上のとき、2F スクロールすると fast gain が掛かった量になる */
+ZTEST_F(iqs9151_work_cb, test_2f_scroll_speed_at_or_above_fast_speed_applies_fast_gain) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame entry = make_two_finger_frame(160);
+    const struct iqs9151_test_frame fast_move = make_two_finger_frame(220);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &entry, 10);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+
+    set_driver_param(fixture, "2f_scroll_slow_speed", 10);
+    set_driver_param(fixture, "2f_scroll_fast_speed", 40);
+    set_driver_param(fixture, "2f_scroll_slow_gain_x100", 100);
+    set_driver_param(fixture, "2f_scroll_fast_gain_x100", 50);
+
+    iqs9151_test_process_frame(fixture->ctx, &fast_move, 20);
+
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -30, true);
+}
+
+/* 速度がしきい値の間のとき、2F スクロールすると線形補間された倍率になる */
+ZTEST_F(iqs9151_work_cb, test_2f_scroll_speed_between_thresholds_interpolates_gain) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame entry = make_two_finger_frame(160);
+    const struct iqs9151_test_frame mid_move = make_two_finger_frame(185);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &entry, 10);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+
+    set_driver_param(fixture, "2f_scroll_slow_speed", 10);
+    set_driver_param(fixture, "2f_scroll_fast_speed", 40);
+    set_driver_param(fixture, "2f_scroll_slow_gain_x100", 100);
+    set_driver_param(fixture, "2f_scroll_fast_gain_x100", 40);
+
+    /* speed=25 は slow_speed(10) と fast_speed(40) の中間で、gain は 70(%) になる */
+    iqs9151_test_process_frame(fixture->ctx, &mid_move, 20);
+
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -17, true);
+}
+
+/* 倍率50で1カウントずつ動かし続けたとき、端数が持ち越されて2フレームに1回スクロールが出る */
+ZTEST_F(iqs9151_work_cb, test_2f_scroll_gain_50_percent_carries_remainder_every_other_frame) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame entry = make_two_finger_frame(160);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &entry, 10);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+
+    set_driver_param(fixture, "2f_scroll_slow_gain_x100", 50);
+
+    for (uint16_t i = 1; i <= 4; i++) {
+        const struct iqs9151_test_frame step_move = make_two_finger_frame((uint16_t)(160U + i));
+
+        iqs9151_test_process_frame(fixture->ctx, &step_move, 10 + (10 * i));
+        zassert_equal(fixture->log.count, 1U + (i / 2U), "frame %u 後の events=%u", (unsigned int)i,
+                      (unsigned int)fixture->log.count);
+    }
+
+    zassert_equal(fixture->log.count, 3U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -1, true);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_HWHEEL, -1, true);
+}
+
+/* slow_speed >= fast_speed のとき、2F スクロールしてもゼロ除算せず二値でゲインが決まる */
+ZTEST_F(iqs9151_work_cb, test_2f_scroll_slow_speed_ge_fast_speed_avoids_division_by_zero) {
+    const struct iqs9151_test_frame two_start = make_two_finger_frame(100);
+    const struct iqs9151_test_frame entry = make_two_finger_frame(160);
+    const struct iqs9151_test_frame within_slow = make_two_finger_frame(185);
+    const struct iqs9151_test_frame above_slow = make_two_finger_frame(220);
+
+    iqs9151_test_process_frame(fixture->ctx, &two_start, 0);
+    iqs9151_test_process_frame(fixture->ctx, &entry, 10);
+    zassert_equal(fixture->log.count, 1U, "events=%u", (unsigned int)fixture->log.count);
+
+    set_driver_param(fixture, "2f_scroll_slow_speed", 30);
+    set_driver_param(fixture, "2f_scroll_fast_speed", 10);
+    set_driver_param(fixture, "2f_scroll_slow_gain_x100", 80);
+    set_driver_param(fixture, "2f_scroll_fast_gain_x100", 20);
+
+    /* speed=25 <= slow_speed(30) なので slow gain(80%) */
+    iqs9151_test_process_frame(fixture->ctx, &within_slow, 20);
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_HWHEEL, -20, true);
+
+    /* speed=35 > slow_speed(30) なので fast gain(20%) */
+    iqs9151_test_process_frame(fixture->ctx, &above_slow, 30);
+    zassert_equal(fixture->log.count, 3U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_HWHEEL, -7, true);
+}
+
 static struct iqs9151_test_frame make_two_finger_xy_frame(uint16_t finger1_x, uint16_t finger1_y,
                                                           uint16_t finger2_x, uint16_t finger2_y) {
     return make_frame(2U,

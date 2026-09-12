@@ -103,6 +103,14 @@ enum iqs9151_param_kind {
       1, IQS9151_PARAM_DRIVER_BOOL, 0)                                                          \
     X(f2_scroll_start_move, "2f_scroll_start_move",                                             \
       CONFIG_INPUT_IQS9151_2F_SCROLL_START_MOVE, 1, 2000, IQS9151_PARAM_DRIVER, 0)              \
+    X(f2_scroll_slow_speed, "2f_scroll_slow_speed",                                             \
+      CONFIG_INPUT_IQS9151_2F_SCROLL_SLOW_SPEED, 0, 500, IQS9151_PARAM_DRIVER, 0)               \
+    X(f2_scroll_fast_speed, "2f_scroll_fast_speed",                                             \
+      CONFIG_INPUT_IQS9151_2F_SCROLL_FAST_SPEED, 0, 500, IQS9151_PARAM_DRIVER, 0)               \
+    X(f2_scroll_slow_gain_x100, "2f_scroll_slow_gain_x100",                                     \
+      CONFIG_INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100, 0, 400, IQS9151_PARAM_DRIVER, 0)           \
+    X(f2_scroll_fast_gain_x100, "2f_scroll_fast_gain_x100",                                     \
+      CONFIG_INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100, 0, 400, IQS9151_PARAM_DRIVER, 0)           \
     X(f2_pinch_enable, "2f_pinch_enable", IS_ENABLED(CONFIG_INPUT_IQS9151_2F_PINCH_ENABLE), 0,  \
       1, IQS9151_PARAM_DRIVER_BOOL, 0)                                                          \
     X(f2_pinch_start_distance, "2f_pinch_start_distance",                                       \

@@ -323,6 +323,8 @@ struct iqs9151_two_finger_state {
     int32_t centroid_last_y;
     int32_t distance_last;
     int32_t pinch_wheel_remainder;
+    int32_t scroll_gain_remainder_x;
+    int32_t scroll_gain_remainder_y;
     enum iqs9151_two_finger_mode mode;
 };
 struct iqs9151_two_finger_result {
@@ -1586,6 +1588,29 @@ static int32_t iqs9151_two_finger_distance(uint16_t x1, uint16_t y1,
     return iqs9151_abs32(dx) + iqs9151_abs32(dy);
 }
 
+/*
+ * slow_speed 以下は slow gain、fast_speed 以上は fast gain、間は線形補間。
+ * slow_speed >= fast_speed のときはしきい値の間の補間をやめて二値にする。
+ */
+static int32_t iqs9151_two_finger_scroll_gain_x100(const struct iqs9151_params *p, int32_t speed) {
+    const int32_t slow_speed = p->f2_scroll_slow_speed;
+    const int32_t fast_speed = p->f2_scroll_fast_speed;
+    const int32_t slow_gain = p->f2_scroll_slow_gain_x100;
+    const int32_t fast_gain = p->f2_scroll_fast_gain_x100;
+
+    if (slow_speed >= fast_speed) {
+        return (speed <= slow_speed) ? slow_gain : fast_gain;
+    }
+    if (speed <= slow_speed) {
+        return slow_gain;
+    }
+    if (speed >= fast_speed) {
+        return fast_gain;
+    }
+    return slow_gain + (int32_t)(((int64_t)(fast_gain - slow_gain) * (speed - slow_speed)) /
+                                 (fast_speed - slow_speed));
+}
+
 static void iqs9151_one_finger_reset(struct iqs9151_one_finger_state *state) {
     state->active = false;
     state->hold_sent = false;
@@ -1615,6 +1640,8 @@ static void iqs9151_two_finger_reset(struct iqs9151_two_finger_state *state) {
     state->centroid_last_y = 0;
     state->distance_last = 0;
     state->pinch_wheel_remainder = 0;
+    state->scroll_gain_remainder_x = 0;
+    state->scroll_gain_remainder_y = 0;
     state->mode = IQS9151_2F_MODE_NONE;
 }
 
@@ -1847,6 +1874,8 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         state->centroid_dy = 0;
         state->distance_delta = 0;
         state->pinch_wheel_remainder = 0;
+        state->scroll_gain_remainder_x = 0;
+        state->scroll_gain_remainder_y = 0;
         state->mode = IQS9151_2F_MODE_NONE;
         if (have_xy) {
             state->centroid_last_x = ((int32_t)f1x + (int32_t)f2x) / 2;
@@ -1913,6 +1942,8 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
             if (state->mode == IQS9151_2F_MODE_SCROLL) {
                 result->scroll_started = true;
                 state->tap_candidate = false;
+                state->scroll_gain_remainder_x = 0;
+                state->scroll_gain_remainder_y = 0;
             } else if (state->mode == IQS9151_2F_MODE_PINCH) {
                 result->pinch_started = true;
                 state->tap_candidate = false;
@@ -1920,12 +1951,21 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         }
 
         if (state->mode == IQS9151_2F_MODE_SCROLL) {
+            const int32_t speed = iqs9151_abs32(step_x) + iqs9151_abs32(step_y);
+            const int32_t gain_x100 = iqs9151_two_finger_scroll_gain_x100(p, speed);
+            const int32_t acc_x = state->scroll_gain_remainder_x + (step_x * gain_x100);
+            const int32_t acc_y = state->scroll_gain_remainder_y + (step_y * gain_x100);
+            const int32_t gained_x = acc_x / 100;
+            const int32_t gained_y = acc_y / 100;
+
+            state->scroll_gain_remainder_x = acc_x - (gained_x * 100);
+            state->scroll_gain_remainder_y = acc_y - (gained_y * 100);
             result->scroll_active = true;
             if (p->scroll_x_enable != 0) {
-                result->scroll_x = (int16_t)CLAMP(step_x, INT16_MIN, INT16_MAX);
+                result->scroll_x = (int16_t)CLAMP(gained_x, INT16_MIN, INT16_MAX);
             }
             if (p->scroll_y_enable != 0) {
-                result->scroll_y = (int16_t)CLAMP(step_y, INT16_MIN, INT16_MAX);
+                result->scroll_y = (int16_t)CLAMP(gained_y, INT16_MIN, INT16_MAX);
             }
         } else if (state->mode == IQS9151_2F_MODE_PINCH) {
             const int32_t wheel_div =
