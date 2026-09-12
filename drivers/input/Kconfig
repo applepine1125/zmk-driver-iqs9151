@@ -31,7 +31,6 @@ choice INPUT_IQS9151_ROTATE
     default INPUT_IQS9151_ROTATE_0
     help
       Rotate the trackpad coordinate system (0/90/180/270).
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_ROTATE_0
     bool "0"
@@ -54,7 +53,6 @@ config INPUT_IQS9151_RESOLUTION_X
       X Resolution (0x11E6).
       Limited to 0-4095 to match the practical 12-bit trackpad
       coordinate scale used by the device configuration.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_RESOLUTION_Y
     int "IQS9151 Y resolution"
@@ -64,16 +62,15 @@ config INPUT_IQS9151_RESOLUTION_Y
       Y Resolution (0x11E8).
       Limited to 0-4095 to match the practical 12-bit trackpad
       coordinate scale used by the device configuration.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_ATI_TARGETCOUNT
     int "IQS9151 ATI target count"
     range 0 1000
     default 400
     help
-      Trackpad ATI Target (0x119A).
+      Trackpad ATI Target (0x1196).
       Limited to 0-1000 to avoid unstable behavior.
-      Currently not applied by the driver.
+      Changing this requires a re-ATI (tp reati) to take effect.
 
 config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_SPEED
     int "IQS9151 dynamic filter bottom speed"
@@ -83,7 +80,6 @@ config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_SPEED
       XY Dynamic Filter Bottom Speed (0x11EA).
       Limited to 0-2047 to stay within the documented trackpad count
       upper-limit scale.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED
     int "IQS9151 dynamic filter top speed"
@@ -93,7 +89,6 @@ config INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED
       XY Dynamic Filter Top Speed (0x11EC).
       Limited to 0-2047 to stay within the documented trackpad count
       upper-limit scale.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_BETA
     int "IQS9151 dynamic filter bottom beta"
@@ -101,7 +96,6 @@ config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_BETA
     default 20
     help
       XY Dynamic Filter Bottom Beta (0x11EE).
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_TOUCH_SET_THRESHOLD
     int "IQS9151 touch set threshold multiplier"
