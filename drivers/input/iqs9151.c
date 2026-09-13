@@ -307,6 +307,8 @@ struct iqs9151_one_finger_state {
     bool tap_candidate;
     bool hold_candidate;
     bool tapdrag_second_touch;
+    /* 2F/3F の同名フィールド(指本数が減ったときの固定デバウンス)とは別物で、
+     * ドラッグ中(hold_sent)の離しを 1f_release_grace_ms だけ待つための状態 */
     bool release_pending;
     int64_t down_ms;
     int64_t release_pending_ms;

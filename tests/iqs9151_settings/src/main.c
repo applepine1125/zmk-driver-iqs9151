@@ -264,6 +264,30 @@ ZTEST_F(iqs9151_settings, test_load_ignores_count_mismatch_blob) {
     zassert_false(iqs9151_settings_loaded(), NULL);
 }
 
+/* 静的バッファより長いブロブが保存されているとき、読み込まずに既定のままにする */
+ZTEST_F(iqs9151_settings, test_load_ignores_oversized_blob) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    struct iqs9151_params src;
+    uint8_t buf[MEM_STORE_VALUE_MAX];
+    int32_t value = 0;
+    int len;
+
+    memset(buf, 0, sizeof(buf));
+    iqs9151_params_init(&src);
+    src.f1_tap_max_ms = 333;
+    len = iqs9151_settings_encode(&src, buf, sizeof(buf));
+    zassert_true(len > 0, NULL);
+    zassert_true(sizeof(buf) > 4U + sizeof(struct iqs9151_params), "ブロブが上限を超えていない");
+    /* ヘッダは正しいまま、長さだけ読み込み用の静的バッファより大きくする */
+    mem_store_put(buf, sizeof(buf));
+
+    zassert_equal(settings_load(), 0, NULL);
+
+    zassert_equal(iqs9151_dev_param_get(dev, "1f_tap_max_ms", &value), 0, NULL);
+    zassert_equal(value, CONFIG_INPUT_IQS9151_1F_TAP_MAX_MS, "上限超えのブロブが適用された");
+    zassert_false(iqs9151_settings_loaded(), NULL);
+}
+
 /* 範囲外の値を含むブロブを load すると、その値だけ飛ばして他は適用される */
 ZTEST_F(iqs9151_settings, test_load_skips_out_of_range_value) {
     const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);

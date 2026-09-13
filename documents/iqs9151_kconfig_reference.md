@@ -54,6 +54,8 @@
 |`CONFIG_INPUT_IQS9151_1F_TAP_MOVE`|int|`50`|1F Tap 移動しきい値|
 |`CONFIG_INPUT_IQS9151_1F_PRESSHOLD_ENABLE`|bool|`y`|1F deferred-click/drag 有効/無効|
 |`CONFIG_INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS`|int|`160`|1F Tap後にBTN0を保持して2回目タッチを待つ最大時間|
+|`CONFIG_INPUT_IQS9151_1F_RELEASE_GRACE_MS`|int|`60`|1F Drag(hold保持中)で指の検出が切れてから release を確定するまでの猶予。0 で猶予なし。範囲 0〜500|
+|`CONFIG_INPUT_IQS9151_1F_DRAG_HOLD_MS`|int|`0`|2回目タッチを Drag に確定する押下時間。0 で `1F_TAP_MAX_MS` を使う。範囲 0〜1000|
 |`CONFIG_INPUT_IQS9151_2F_TAP_ENABLE`|bool|`y`|2F Tap 有効/無効|
 |`CONFIG_INPUT_IQS9151_2F_TAP_MAX_MS`|int|`250`|2F Tap 最大時間|
 |`CONFIG_INPUT_IQS9151_2F_TAP_MOVE`|int|`50`|2F Tap 移動しきい値（重心/距離）|
@@ -62,6 +64,10 @@
 |`CONFIG_INPUT_IQS9151_SCROLL_X_ENABLE`|bool|`y`|2F 横スクロール有効/無効|
 |`CONFIG_INPUT_IQS9151_SCROLL_Y_ENABLE`|bool|`y`|2F 縦スクロール有効/無効|
 |`CONFIG_INPUT_IQS9151_2F_SCROLL_START_MOVE`|int|`50`|2F Scroll 開始しきい値|
+|`CONFIG_INPUT_IQS9151_2F_SCROLL_SLOW_SPEED`|int|`4`|この速度以下を「ゆっくり」として `SLOW_GAIN_X100` を使う(1フレームのマンハッタン距離)。範囲 0〜500|
+|`CONFIG_INPUT_IQS9151_2F_SCROLL_FAST_SPEED`|int|`40`|この速度以上を「速い」として `FAST_GAIN_X100` を使う。範囲 0〜500|
+|`CONFIG_INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100`|int|`100`|ゆっくり動かしたときのスクロール量ゲイン(x100、100 で等倍)。範囲 0〜400|
+|`CONFIG_INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100`|int|`100`|速く動かしたときのスクロール量ゲイン(x100、100 で等倍)。範囲 0〜400|
 |`CONFIG_INPUT_IQS9151_2F_PINCH_ENABLE`|bool|`y`|2F Pinch 有効/無効|
 |`CONFIG_INPUT_IQS9151_2F_PINCH_START_DISTANCE`|int|`100`|2F Pinch 開始しきい値|
 |`CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10`|int|`40`|2F Pinch `REL_WHEEL` ゲイン（x10）|
