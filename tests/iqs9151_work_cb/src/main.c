@@ -761,6 +761,237 @@ ZTEST_F(iqs9151_work_cb, test_one_finger_tap_releases_latched_hold) {
                   "Hold button should be cleared by tap");
 }
 
+/* TapDrag のドラッグ確定後、猶予60ms中に1フレームだけ指が消えて戻ると、
+ * ボタンが離されずドラッグが続く */
+ZTEST_F(iqs9151_work_cb, test_one_finger_drag_survives_single_frame_dropout_within_release_grace) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame first_tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame first_tap_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame second_touch_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame second_touch_move_far =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 140, 100, 0, 0);
+    const struct iqs9151_test_frame dropout =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame reconnect =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 140, 100, 0, 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_up, k_uptime_get());
+    k_msleep(60);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_move_far, k_uptime_get());
+
+    /* ドラッグ確定後にのみ猶予を有効化し、タップドラッグの2回目接触判定と
+     * 猶予の解釈が競合しないようにする */
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 60), 0, NULL);
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 1U,
+                  "Dropout within grace must not release the hold yet");
+    zassert_equal(iqs9151_test_hold_button(fixture->ctx), INPUT_BTN_0,
+                  "BTN0 should stay pressed while grace is pending");
+
+    k_msleep(20);
+    iqs9151_test_process_frame(fixture->ctx, &reconnect, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 1U,
+                  "Reconnect within grace must keep the drag going without releasing");
+    zassert_equal(iqs9151_test_hold_button(fixture->ctx), INPUT_BTN_0,
+                  "BTN0 should remain pressed after reconnecting within grace");
+}
+
+/* TapDrag のドラッグ確定後、指が消えたまま猶予60msを過ぎると、今までどおりボタンが離される */
+ZTEST_F(iqs9151_work_cb, test_one_finger_drag_releases_after_release_grace_elapses) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame first_tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame first_tap_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame second_touch_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame second_touch_move_far =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 140, 100, 0, 0);
+    const struct iqs9151_test_frame dropout =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_up, k_uptime_get());
+    k_msleep(60);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_move_far, k_uptime_get());
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 60), 0, NULL);
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 1U, "Expected no release yet while grace is pending");
+
+    k_msleep(90);
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 2U,
+                  "Expected BTN0 release once release grace elapses");
+    zassert_equal(fixture->log.events[1].type, IQS9151_TEST_EVENT_KEY, "Event[1] not key");
+    zassert_equal(fixture->log.events[1].code, INPUT_BTN_0, "Event[1] unexpected code");
+    zassert_equal(fixture->log.events[1].value, 0, "Event[1] should be BTN0 release");
+    zassert_equal(iqs9151_test_hold_button(fixture->ctx), 0U,
+                  "Hold button should be cleared once grace elapses");
+}
+
+/* 猶予0msのとき、指が1フレーム消えた時点で今までどおり即座にボタンが離される */
+ZTEST_F(iqs9151_work_cb, test_one_finger_drag_releases_immediately_when_release_grace_is_zero) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame first_tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame first_tap_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame second_touch_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame second_touch_move_far =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 140, 100, 0, 0);
+    const struct iqs9151_test_frame dropout =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 0), 0, NULL);
+
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_up, k_uptime_get());
+    k_msleep(60);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_move_far, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 2U,
+                  "Expected immediate BTN0 release with no grace");
+    zassert_equal(fixture->log.events[1].type, IQS9151_TEST_EVENT_KEY, "Event[1] not key");
+    zassert_equal(fixture->log.events[1].code, INPUT_BTN_0, "Event[1] unexpected code");
+    zassert_equal(fixture->log.events[1].value, 0, "Event[1] should be BTN0 release");
+    zassert_equal(iqs9151_test_hold_button(fixture->ctx), 0U,
+                  "Hold button should be cleared immediately without grace");
+}
+
+/* 猶予中に指が離れた位置から遠く離れ直しても、空白期間の座標差はタップ判定の移動量に加算されない */
+ZTEST_F(iqs9151_work_cb,
+        test_one_finger_release_grace_reconnect_does_not_add_gap_move_to_tap_judgement) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame dropout =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame reconnect_far_away =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 600, 100, 0, 0);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 60), 0, NULL);
+
+    iqs9151_test_process_frame(fixture->ctx, &tap_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+    k_msleep(20);
+    iqs9151_test_process_frame(fixture->ctx, &reconnect_far_away, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+    k_msleep(90);
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 1U,
+                  "Expected a deferred BTN0 press: the gap jump must not count as movement");
+    zassert_equal(fixture->log.events[0].type, IQS9151_TEST_EVENT_KEY, "Event[0] not key");
+    zassert_equal(fixture->log.events[0].code, INPUT_BTN_0, "Event[0] unexpected code");
+    zassert_equal(fixture->log.events[0].value, 1, "Event[0] should be BTN0 deferred press");
+}
+
+/* 猶予を過ぎて確定するとき、押下時間の判定には猶予で待った時間が含まれない */
+ZTEST_F(iqs9151_work_cb,
+        test_one_finger_release_grace_elapsed_does_not_extend_down_duration_judgement) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame dropout =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 60), 0, NULL);
+
+    iqs9151_test_process_frame(fixture->ctx, &tap_down, k_uptime_get());
+    k_msleep(30);
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+    k_msleep(150);
+    iqs9151_test_process_frame(fixture->ctx, &dropout, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 1U,
+                  "Down duration must be measured up to the grace entry, not the finalize time");
+    zassert_equal(fixture->log.events[0].type, IQS9151_TEST_EVENT_KEY, "Event[0] not key");
+    zassert_equal(fixture->log.events[0].code, INPUT_BTN_0, "Event[0] unexpected code");
+    zassert_equal(fixture->log.events[0].value, 1, "Event[0] should be BTN0 deferred press (tap)");
+}
+
+/* 1f_drag_hold_ms を120にしたとき、2回目の接触を150ms押して離すとクリックにならず
+ * ドラッグとして終わる */
+ZTEST_F(iqs9151_work_cb, test_one_finger_drag_hold_ms_confirms_drag_instead_of_click) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame first_tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame first_tap_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame second_touch_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame second_touch_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 0), 0, NULL);
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_drag_hold_ms", 120), 0, NULL);
+
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_up, k_uptime_get());
+    k_msleep(60);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_down, k_uptime_get());
+    k_msleep(150);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_up, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 2U,
+                  "Expected only the drag-end release, no click, once drag_hold_ms is exceeded");
+    zassert_equal(fixture->log.events[0].value, 1,
+                  "Event[0] should be the first tap deferred press");
+    zassert_equal(fixture->log.events[1].type, IQS9151_TEST_EVENT_KEY, "Event[1] not key");
+    zassert_equal(fixture->log.events[1].code, INPUT_BTN_0, "Event[1] unexpected code");
+    zassert_equal(fixture->log.events[1].value, 0, "Event[1] should be BTN0 drag-end release");
+    zassert_equal(iqs9151_test_hold_button(fixture->ctx), 0U,
+                  "Hold button should be cleared after the drag ends");
+}
+
+/* 1f_drag_hold_ms が0のときは、従来どおり1f_tap_max_ms でドラッグかクリックかを判定する */
+ZTEST_F(iqs9151_work_cb, test_one_finger_drag_hold_ms_zero_falls_back_to_tap_max_ms) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_test_frame first_tap_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame first_tap_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+    const struct iqs9151_test_frame second_touch_down =
+        make_frame(1U, IQS9151_TP_FINGER1_CONFIDENCE | 1U, 0, 0, 0, 100, 100, 0, 0);
+    const struct iqs9151_test_frame second_touch_up =
+        make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    zassert_equal(iqs9151_dev_param_set(dev, "1f_release_grace_ms", 0), 0, NULL);
+
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_down, k_uptime_get());
+    iqs9151_test_process_frame(fixture->ctx, &first_tap_up, k_uptime_get());
+    k_msleep(60);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_down, k_uptime_get());
+    k_msleep(50);
+    iqs9151_test_process_frame(fixture->ctx, &second_touch_up, k_uptime_get());
+
+    zassert_equal(fixture->log.count, 4U,
+                  "Expected hold release followed by a click within 1f_tap_max_ms");
+    zassert_equal(fixture->log.events[1].value, 0, "Event[1] should be the latched hold release");
+    zassert_equal(fixture->log.events[2].type, IQS9151_TEST_EVENT_KEY, "Event[2] not key");
+    zassert_equal(fixture->log.events[2].code, INPUT_BTN_0, "Event[2] unexpected code");
+    zassert_equal(fixture->log.events[2].value, 1, "Event[2] should be the second click press");
+    zassert_equal(fixture->log.events[3].type, IQS9151_TEST_EVENT_KEY, "Event[3] not key");
+    zassert_equal(fixture->log.events[3].code, INPUT_BTN_0, "Event[3] unexpected code");
+    zassert_equal(fixture->log.events[3].value, 0, "Event[3] should be the second click release");
+    zassert_equal(iqs9151_test_hold_button(fixture->ctx), 0U,
+                  "Hold button should be cleared after the click");
+}
+
 ZTEST_F(iqs9151_work_cb, test_two_finger_double_tap_emits_release_then_click) {
     const struct iqs9151_test_frame first_tap_down =
         make_frame(2U,

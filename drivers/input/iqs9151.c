@@ -301,7 +301,9 @@ struct iqs9151_one_finger_state {
     bool tap_candidate;
     bool hold_candidate;
     bool tapdrag_second_touch;
+    bool release_pending;
     int64_t down_ms;
+    int64_t release_pending_ms;
     int32_t dx;
     int32_t dy;
     uint16_t last_x;
@@ -1617,11 +1619,17 @@ static void iqs9151_one_finger_reset(struct iqs9151_one_finger_state *state) {
     state->tap_candidate = false;
     state->hold_candidate = false;
     state->tapdrag_second_touch = false;
+    state->release_pending = false;
     state->down_ms = 0;
+    state->release_pending_ms = 0;
     state->dx = 0;
     state->dy = 0;
     state->last_x = 0;
     state->last_y = 0;
+}
+
+static int32_t iqs9151_one_finger_drag_hold_threshold_ms(const struct iqs9151_params *p) {
+    return (p->f1_drag_hold_ms > 0) ? p->f1_drag_hold_ms : p->f1_tap_max_ms;
 }
 
 static void iqs9151_two_finger_reset(struct iqs9151_two_finger_state *state) {
@@ -1657,12 +1665,14 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
     struct iqs9151_one_finger_state *state = &data->one_finger;
     const bool one_now = frame->finger_count == 1U;
     const int64_t now_ms = k_uptime_get();
+    const int32_t drag_hold_ms = iqs9151_one_finger_drag_hold_threshold_ms(p);
     uint16_t x = 0U;
     uint16_t y = 0U;
     const bool have_xy = one_now && iqs9151_get_finger1_xy(frame, prev_frame, &x, &y);
     bool released_from_hold = false;
     bool tap_detected = false;
     bool tap_emitted = false;
+    int64_t release_ms = now_ms;
 
     if (!state->active && one_now) {
         bool tapdrag_second_touch = false;
@@ -1689,7 +1699,9 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
              iqs9151_has_recent_finger_count(data, 0U, now_ms, IQS9151_TAP_REENTRY_WINDOW_MS));
         state->hold_candidate = tapdrag_second_touch;
         state->tapdrag_second_touch = tapdrag_second_touch;
+        state->release_pending = false;
         state->down_ms = now_ms;
+        state->release_pending_ms = 0;
         state->dx = 0;
         state->dy = 0;
         state->last_x = x;
@@ -1703,7 +1715,14 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
     if (one_now) {
         const int64_t elapsed_ms = now_ms - state->down_ms;
 
-        if (have_xy) {
+        if (state->release_pending) {
+            state->release_pending = false;
+            state->release_pending_ms = 0;
+            if (have_xy) {
+                state->last_x = x;
+                state->last_y = y;
+            }
+        } else if (have_xy) {
             const int32_t step_x = (int32_t)x - (int32_t)state->last_x;
             const int32_t step_y = (int32_t)y - (int32_t)state->last_y;
             state->dx += step_x;
@@ -1719,7 +1738,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
             state->tap_candidate = false;
         }
         if (state->tapdrag_second_touch && state->hold_candidate &&
-            (elapsed_ms > p->f1_tap_max_ms ||
+            (elapsed_ms > drag_hold_ms ||
              iqs9151_abs32(state->dx) > p->f1_tap_move ||
              iqs9151_abs32(state->dy) > p->f1_tap_move)) {
             state->hold_candidate = false;
@@ -1727,12 +1746,30 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         return false;
     }
 
+    if (frame->finger_count == 0U && p->f1_release_grace_ms > 0) {
+        if (!state->release_pending) {
+            state->release_pending = true;
+            state->release_pending_ms = now_ms;
+            return false;
+        }
+
+        const int64_t pending_ms = now_ms - state->release_pending_ms;
+
+        if (pending_ms <= p->f1_release_grace_ms) {
+            return false;
+        }
+
+        release_ms = state->release_pending_ms;
+        state->release_pending = false;
+        state->release_pending_ms = 0;
+    }
+
     if (state->tapdrag_second_touch) {
-        const int64_t elapsed_ms = now_ms - state->down_ms;
+        const int64_t elapsed_ms = release_ms - state->down_ms;
         const bool second_tap_detected =
             (frame->finger_count == 0U) &&
             state->hold_candidate &&
-            elapsed_ms <= p->f1_tap_max_ms &&
+            elapsed_ms <= drag_hold_ms &&
             iqs9151_abs32(state->dx) <= p->f1_tap_move &&
             iqs9151_abs32(state->dy) <= p->f1_tap_move;
 
@@ -1749,7 +1786,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
     }
 
     if (frame->finger_count == 0U && state->tap_candidate) {
-        const int64_t elapsed_ms = now_ms - state->down_ms;
+        const int64_t elapsed_ms = release_ms - state->down_ms;
 
         if (elapsed_ms <= p->f1_tap_max_ms &&
             iqs9151_abs32(state->dx) <= p->f1_tap_move &&

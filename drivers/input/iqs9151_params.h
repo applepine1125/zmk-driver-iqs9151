@@ -87,6 +87,10 @@ enum iqs9151_param_kind {
       IS_ENABLED(CONFIG_INPUT_IQS9151_1F_PRESSHOLD_ENABLE), 0, 1, IQS9151_PARAM_DRIVER_BOOL, 0) \
     X(f1_tapdrag_gap_max_ms, "1f_tapdrag_gap_max_ms",                                           \
       CONFIG_INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS, 1, 1000, IQS9151_PARAM_DRIVER, 0)             \
+    X(f1_release_grace_ms, "1f_release_grace_ms", CONFIG_INPUT_IQS9151_1F_RELEASE_GRACE_MS, 0,  \
+      500, IQS9151_PARAM_DRIVER, 0)                                                             \
+    X(f1_drag_hold_ms, "1f_drag_hold_ms", CONFIG_INPUT_IQS9151_1F_DRAG_HOLD_MS, 0, 1000,        \
+      IQS9151_PARAM_DRIVER, 0)                                                                  \
     X(f2_tap_enable, "2f_tap_enable", IS_ENABLED(CONFIG_INPUT_IQS9151_2F_TAP_ENABLE), 0, 1,     \
       IQS9151_PARAM_DRIVER_BOOL, 0)                                                             \
     X(f2_tap_max_ms, "2f_tap_max_ms", CONFIG_INPUT_IQS9151_2F_TAP_MAX_MS, 1, 1000,              \

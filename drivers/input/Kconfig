@@ -257,6 +257,24 @@ config INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS
       Maximum time to keep BTN0 pressed after a 1F tap while waiting
       for a second touch (driver-side).
 
+config INPUT_IQS9151_1F_RELEASE_GRACE_MS
+    int "IQS9151 single-finger release grace period (ms)"
+    range 0 500
+    default 60
+    help
+      Time to keep a 1F contact (tap/drag) alive across frames where the
+      finger briefly drops out, before finalizing the release (driver-side).
+      0 disables the grace period.
+
+config INPUT_IQS9151_1F_DRAG_HOLD_MS
+    int "IQS9151 single-finger TapDrag second-touch drag confirm time (ms)"
+    range 0 1000
+    default 0
+    help
+      Down duration of the 1F TapDrag second touch after which it is
+      confirmed as a drag instead of a click (driver-side). 0 falls back
+      to INPUT_IQS9151_1F_TAP_MAX_MS.
+
 config INPUT_IQS9151_CURSOR_INERTIA_ENABLE
     bool "IQS9151 cursor inertia enable"
     default y
