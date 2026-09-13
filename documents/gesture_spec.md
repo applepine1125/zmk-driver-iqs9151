@@ -43,6 +43,10 @@
     (`CONFIG_INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS`)
   - `ONE_FINGER_TAPDRAG_GAP_MAX_MS = 230`
     (`CONFIG_INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS`)
+  - `ONE_FINGER_RELEASE_GRACE_MS = 60`
+    (`CONFIG_INPUT_IQS9151_1F_RELEASE_GRACE_MS`、ランタイム名 `1f_release_grace_ms`)
+  - `ONE_FINGER_DRAG_HOLD_MS = 0`
+    (`CONFIG_INPUT_IQS9151_1F_DRAG_HOLD_MS`、0 は `ONE_FINGER_TAP_MAX_MS` を使う)
 - 2F:
   - `TWO_FINGER_TAP_MAX_MS = 130` (`CONFIG_INPUT_IQS9151_2F_TAP_MAX_MS`)
   - `TWO_FINGER_TAP_MOVE = 30` (`CONFIG_INPUT_IQS9151_2F_TAP_MOVE`)
@@ -51,8 +55,13 @@
   - `TWO_FINGER_TAPDRAG_GAP_MAX_MS = 200`
     (`CONFIG_INPUT_IQS9151_2F_TAPDRAG_GAP_MAX_MS`)
   - `TWO_FINGER_SCROLL_START_MOVE = 50` (`CONFIG_INPUT_IQS9151_2F_SCROLL_START_MOVE`)
+  - `TWO_FINGER_SCROLL_SLOW_SPEED = 4` (`CONFIG_INPUT_IQS9151_2F_SCROLL_SLOW_SPEED`)
+  - `TWO_FINGER_SCROLL_FAST_SPEED = 40` (`CONFIG_INPUT_IQS9151_2F_SCROLL_FAST_SPEED`)
+  - `TWO_FINGER_SCROLL_SLOW_GAIN_X100 = 100` (`CONFIG_INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100`)
+  - `TWO_FINGER_SCROLL_FAST_GAIN_X100 = 100` (`CONFIG_INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100`)
   - `TWO_FINGER_PINCH_START_DISTANCE = 80` (`CONFIG_INPUT_IQS9151_2F_PINCH_START_DISTANCE`)
   - `TWO_FINGER_PINCH_WHEEL_GAIN_X10 = 40` (`CONFIG_INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10`)
+  - `TWO_FINGER_PINCH_RATIO_X10 = 15` (`CONFIG_INPUT_IQS9151_2F_PINCH_RATIO_X10`)
   - `TWO_FINGER_RELEASE_PENDING_MAX_MS = 150` (固定)
   - `TWO_FINGER_ONE_LEAD_MAX_MS = 120` (固定)
 - 3F:
@@ -94,7 +103,17 @@
       （ダブルクリック相当）
   - 2回目Touch継続:
     - 上記Tap条件を外れた場合は Drag扱いとして `INPUT_BTN_0` press を維持
+      （Tap と Drag を分ける押下時間は `ONE_FINGER_DRAG_HOLD_MS`。
+      0 のときは `ONE_FINGER_TAP_MAX_MS` を使う）
     - finger-up で `INPUT_BTN_0` release
+- 1F Drag の離し猶予:
+  - hold 保持中 (`hold_sent`) の `finger_count==0` は即 release せず、
+    `ONE_FINGER_RELEASE_GRACE_MS` の間だけ再接触を待つ（0 で猶予なし）
+  - 猶予内に再接触した場合は hold を維持し、空白期間の座標ジャンプは移動量に加算しない
+  - 猶予の満了は次フレームの到着だけでなく、ワークキューの遅延ワークでも確定する
+    （イベントモードでは指を離した後にフレームが来ないため）
+  - 確定時の基準時刻は猶予に入った時刻で、待った時間は Tap/Drag 判定の経過時間に含めない
+  - 1回目Tapの deferred-click 保持中には適用しない
 - 1F Cursor Inertia:
   - 発動: `1->0` release かつ hold release 由来でない場合のみ
   - 直近 `CONFIG_INPUT_IQS9151_CURSOR_INERTIA_RECENT_WINDOW_MS` ms の
@@ -146,7 +165,16 @@
 - 2F Scroll:
   - 開始: `mode==NONE` かつ
     `max(abs(centroid_dx), abs(centroid_dy)) >= TWO_FINGER_SCROLL_START_MOVE`
+    かつ後述の Scroll/Pinch 判定で Scroll が選ばれたとき
   - 出力: `REL_HWHEEL` / `REL_WHEEL`（設定有効軸のみ）
+  - 送出量: 1フレームの移動量に速度別ゲインを掛ける
+    - 速度は `abs(step_x) + abs(step_y)`（1フレームのマンハッタン距離）
+    - `<= TWO_FINGER_SCROLL_SLOW_SPEED` は `TWO_FINGER_SCROLL_SLOW_GAIN_X100`、
+      `>= TWO_FINGER_SCROLL_FAST_SPEED` は `TWO_FINGER_SCROLL_FAST_GAIN_X100`、
+      その間は線形補間（整数除算）
+    - `SLOW_SPEED >= FAST_SPEED` のときは補間せず二値にする（ゼロ除算回避）
+    - 端数は軸ごとに持ち越し、Scroll 開始時と `mode==NONE` 復帰時にリセットする
+    - 既定はどちらも 100（等倍）で、devicetree の `zip_scroll_accel_*` とは別に掛かる
   - Scroll Inertia:
     - `scroll_ended` 時に、直近
       `CONFIG_INPUT_IQS9151_SCROLL_INERTIA_RECENT_WINDOW_MS` ms の
@@ -165,8 +193,8 @@
     - 抑止は全指離し (`finger_count==0`) まで維持する
 - 2F Pinch:
   - 開始: `mode==NONE` かつ
-    `abs(distance_delta) >= TWO_FINGER_PINCH_START_DISTANCE` かつ
-    `abs(distance_delta) > max(abs(centroid_dx), abs(centroid_dy))`
+    `abs(distance_delta) >= TWO_FINGER_PINCH_START_DISTANCE`
+    かつ後述の Scroll/Pinch 判定で Pinch が選ばれたとき
   - `REL_WHEEL` は `step_dist` を基に
     `wheel = (step_dist * TWO_FINGER_PINCH_WHEEL_GAIN_X10) / (12 * 10)` 相当で算出
     （余りはフレーム間で保持）
@@ -175,8 +203,23 @@
     - 尾部の `finger_count==1` では `REL_X/Y` を送出しない
     - 尾部の `finger_count==1` / `1->0` では cursor inertia の seed/start を行わない
     - 抑止は全指離し (`finger_count==0`) まで維持する
-- Scroll/Pinch競合:
-  - 同時成立時は Scroll 優先で mode 固定
+- Scroll/Pinch 判定（`mode==NONE` の各フレームで評価）:
+  - `abs_center = max(abs(centroid_dx), abs(centroid_dy))`、
+    `abs_dist = abs(distance_delta)`
+  - `scroll_ok = scroll有効 かつ abs_center >= TWO_FINGER_SCROLL_START_MOVE`
+  - `pinch_ok = pinch有効 かつ abs_dist >= TWO_FINGER_PINCH_START_DISTANCE`
+  - `dist_dominates = abs_dist * 10 >= abs_center * CONFIG_INPUT_IQS9151_2F_PINCH_RATIO_X10`
+  - 上から順に最初に当てはまったものを採用し、どれにも当てはまらなければ
+    `NONE` のまま次フレームを待つ:
+    1. `pinch_ok && dist_dominates` → Pinch
+    2. `scroll_ok && !dist_dominates` → Scroll
+    3. `scroll_ok` かつ pinch 無効 → Scroll
+    4. `pinch_ok` かつ scroll 無効 → Pinch
+    5. `scroll_ok && abs_center >= 2 * TWO_FINGER_SCROLL_START_MOVE` → Scroll
+       （比率が曖昧でも重心移動が絶対量で十分大きい）
+    6. `pinch_ok && abs_dist >= 2 * TWO_FINGER_PINCH_START_DISTANCE` → Pinch
+       （同上、距離変化側）
+  - 一度 mode が決まったら 2F セッション終了まで固定
 
 ### 4.3 3F
 
@@ -293,3 +336,12 @@
 - 2026-04-09: 2F scroll inertia の停止条件に新規 1F 接触 (`0->1`) を追加
   - scroll inertia 動作中に新しい 1F タッチが始まった場合は inertia を停止する
   - 既存の `2->1->0` tail 抑止仕様とは独立で、tail の `2->1` は停止条件に含めない
+- 2026-09-13: 1F Drag の離し猶予とドラッグ確定時間の分離、2F Scroll の速度別ゲインを追加
+  - 1F Drag（hold 保持中）の `finger_count==0` に `ONE_FINGER_RELEASE_GRACE_MS`（既定 60）の
+    猶予を追加。猶予内の再接触で hold を維持し、満了はフレーム到着とワークキューの
+    タイムアウトのどちらでも確定する（イベントモードでフレームが来ない場合への対応）
+  - 2回目タッチを Drag に確定する押下時間を `ONE_FINGER_DRAG_HOLD_MS`（既定 0 =
+    `ONE_FINGER_TAP_MAX_MS` を使う）として Tap 判定から分離
+  - 2F Scroll の送出量に速度別ゲイン（`TWO_FINGER_SCROLL_SLOW_SPEED` /
+    `FAST_SPEED` / `SLOW_GAIN_X100` / `FAST_GAIN_X100`）を追加。
+    既定は等倍で従来と同じ挙動、端数は軸ごとに持ち越す

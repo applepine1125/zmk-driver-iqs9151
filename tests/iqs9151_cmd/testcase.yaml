@@ -1,0 +1,8 @@
+tests:
+  iqs9151.cmd:
+    tags:
+      - iqs9151
+      - input
+    platform_allow:
+      - native_sim
+      - native_sim_64

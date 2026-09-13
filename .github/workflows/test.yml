@@ -1,0 +1,61 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ztest:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/zmkfirmware/zmk-build-arm:3.5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: modules/zmk-driver-iqs9151
+
+      - name: Cache west modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            zmk
+            zephyr
+            modules/hal
+            modules/lib
+            modules/crypto
+            modules/debug
+            modules/fs
+            tools
+          key: ${{ runner.os }}-west-${{ hashFiles('modules/zmk-driver-iqs9151/west.yml') }}
+
+      - name: Initialize workspace
+        # `west init -l modules/zmk-driver-iqs9151` は topdir をリポジトリの
+        # 直上の親ディレクトリ(= modules/)にしてしまい、CMakeLists.txt が前提とする
+        # 「topdir 直下に zmk/ を置く」レイアウトと合わなくなる(west の仕様上、
+        # `-l` はマニフェストリポジトリの直接の親を topdir とするため)。
+        # そのため .west/config を直接作成し、topdir をチェックアウトルートに固定する。
+        run: |
+          mkdir -p .west
+          cat > .west/config << 'EOF'
+          [manifest]
+          path = modules/zmk-driver-iqs9151
+          file = west.yml
+          EOF
+
+      - name: Update modules
+        run: west update --fetch-opt=--filter=tree:0
+
+      - name: Export Zephyr CMake package
+        run: west zephyr-export
+
+      - name: Run tests
+        run: |
+          status=0
+          for t in $(ls modules/zmk-driver-iqs9151/tests | grep -v '\.sh$'); do
+            echo "=== $t ==="
+            west build -p always -b native_sim_64 -d "build/$t" "modules/zmk-driver-iqs9151/tests/$t" -t run || status=1
+          done
+          exit $status

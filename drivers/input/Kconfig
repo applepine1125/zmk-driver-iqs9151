@@ -31,7 +31,6 @@ choice INPUT_IQS9151_ROTATE
     default INPUT_IQS9151_ROTATE_0
     help
       Rotate the trackpad coordinate system (0/90/180/270).
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_ROTATE_0
     bool "0"
@@ -54,7 +53,6 @@ config INPUT_IQS9151_RESOLUTION_X
       X Resolution (0x11E6).
       Limited to 0-4095 to match the practical 12-bit trackpad
       coordinate scale used by the device configuration.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_RESOLUTION_Y
     int "IQS9151 Y resolution"
@@ -64,16 +62,15 @@ config INPUT_IQS9151_RESOLUTION_Y
       Y Resolution (0x11E8).
       Limited to 0-4095 to match the practical 12-bit trackpad
       coordinate scale used by the device configuration.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_ATI_TARGETCOUNT
     int "IQS9151 ATI target count"
     range 0 1000
     default 400
     help
-      Trackpad ATI Target (0x119A).
+      Trackpad ATI Target (0x1196).
       Limited to 0-1000 to avoid unstable behavior.
-      Currently not applied by the driver.
+      Changing this requires a re-ATI (tp reati) to take effect.
 
 config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_SPEED
     int "IQS9151 dynamic filter bottom speed"
@@ -83,7 +80,6 @@ config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_SPEED
       XY Dynamic Filter Bottom Speed (0x11EA).
       Limited to 0-2047 to stay within the documented trackpad count
       upper-limit scale.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED
     int "IQS9151 dynamic filter top speed"
@@ -93,7 +89,6 @@ config INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED
       XY Dynamic Filter Top Speed (0x11EC).
       Limited to 0-2047 to stay within the documented trackpad count
       upper-limit scale.
-      Currently not applied by the driver.
 
 config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_BETA
     int "IQS9151 dynamic filter bottom beta"
@@ -101,7 +96,130 @@ config INPUT_IQS9151_DYNAMIC_FILTER_BOTTOM_BETA
     default 20
     help
       XY Dynamic Filter Bottom Beta (0x11EE).
-      Currently not applied by the driver.
+
+config INPUT_IQS9151_TOUCH_SET_THRESHOLD
+    int "IQS9151 touch set threshold multiplier"
+    range 0 255
+    default 30
+    help
+      Touch Set Threshold Multiplier (0x11CC).
+      Lower values make a lighter touch register as a finger; too low
+      values let noise trigger ghost touches.
+
+config INPUT_IQS9151_TOUCH_CLEAR_THRESHOLD
+    int "IQS9151 touch clear threshold multiplier"
+    range 0 255
+    default 26
+    help
+      Touch Clear Threshold Multiplier (0x11CD).
+      Keep it below the set threshold to get hysteresis.
+
+config INPUT_IQS9151_ACTIVE_MODE_SAMPLING_PERIOD_MS
+    int "IQS9151 active mode sampling period (ms)"
+    range 1 65535
+    default 10
+    help
+      Active Mode Sampling Period (0x11A2).
+
+config INPUT_IQS9151_IDLE_TOUCH_MODE_SAMPLING_PERIOD_MS
+    int "IQS9151 idle-touch mode sampling period (ms)"
+    range 1 65535
+    default 50
+    help
+      Idle-Touch Mode Sampling Period (0x11A4).
+
+config INPUT_IQS9151_IDLE_MODE_SAMPLING_PERIOD_MS
+    int "IQS9151 idle mode sampling period (ms)"
+    range 1 65535
+    default 50
+    help
+      Idle Mode Sampling Period (0x11A6).
+      Shorter periods reduce the first-touch latency after the pad has
+      been idle, at the cost of power.
+
+config INPUT_IQS9151_LP1_MODE_SAMPLING_PERIOD_MS
+    int "IQS9151 LP1 mode sampling period (ms)"
+    range 1 65535
+    default 50
+    help
+      LP1 Mode Sampling Period (0x11A8).
+
+config INPUT_IQS9151_LP2_MODE_SAMPLING_PERIOD_MS
+    int "IQS9151 LP2 mode sampling period (ms)"
+    range 1 65535
+    default 50
+    help
+      LP2 Mode Sampling Period (0x11AA).
+
+config INPUT_IQS9151_ACTIVE_MODE_TIMEOUT_MS
+    int "IQS9151 active to idle mode timeout (ms)"
+    range 0 65535
+    default 1500
+    help
+      Active to Idle Mode Timeout (0x11B4).
+      Time without touch before the device leaves active mode.
+
+config INPUT_IQS9151_IDLE_TOUCH_MODE_TIMEOUT_S
+    int "IQS9151 idle-touch mode timeout (s)"
+    range 0 65535
+    default 10
+    help
+      Idle-Touch Mode Timeout (0x11AE).
+      Time with a stationary touch before the device goes to idle mode.
+
+config INPUT_IQS9151_IDLE_MODE_TIMEOUT_S
+    int "IQS9151 idle mode timeout (s)"
+    range 0 65535
+    default 5
+    help
+      Idle Mode Timeout (0x11B0).
+      Time in idle mode before the device goes to LP1.
+
+config INPUT_IQS9151_LP1_MODE_TIMEOUT_S
+    int "IQS9151 LP1 mode timeout (s)"
+    range 0 65535
+    default 40
+    help
+      LP1 Mode Timeout (0x11B2).
+      Time in LP1 before the device goes to LP2.
+
+config INPUT_IQS9151_ALP_SET_DEBOUNCE
+    int "IQS9151 ALP set debounce"
+    range 0 255
+    default 2
+    help
+      ALP Set Debounce (0x11D0).
+      Number of consecutive ALP samples required to wake from low power
+      modes. Lower values reduce first-touch latency.
+
+config INPUT_IQS9151_ALP_CLEAR_DEBOUNCE
+    int "IQS9151 ALP clear debounce"
+    range 0 255
+    default 2
+    help
+      ALP Clear Debounce (0x11D1).
+
+config INPUT_IQS9151_STATIONARY_TOUCH_MOV_THRESHOLD
+    int "IQS9151 stationary touch movement threshold"
+    range 0 255
+    default 5
+    help
+      Stationary Touch Movement Threshold (0x11F0).
+
+config INPUT_IQS9151_JITTER_FILTER_DELTA
+    int "IQS9151 jitter filter delta threshold"
+    range 0 255
+    default 2
+    help
+      Jitter Filter Delta Threshold (0x11F4).
+
+config INPUT_IQS9151_FINGER_CONFIDENCE_THRESHOLD
+    int "IQS9151 finger confidence threshold"
+    range 0 255
+    default 20
+    help
+      Finger Confidence Threshold (0x11F5).
+      Higher values reject weak or ambiguous touches.
 
 config INPUT_IQS9151_1F_TAP_ENABLE
     bool "IQS9151 single-finger tap enable"
@@ -138,6 +256,24 @@ config INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS
     help
       Maximum time to keep BTN0 pressed after a 1F tap while waiting
       for a second touch (driver-side).
+
+config INPUT_IQS9151_1F_RELEASE_GRACE_MS
+    int "IQS9151 single-finger release grace period (ms)"
+    range 0 500
+    default 60
+    help
+      Time to keep a 1F contact (tap/drag) alive across frames where the
+      finger briefly drops out, before finalizing the release (driver-side).
+      0 disables the grace period.
+
+config INPUT_IQS9151_1F_DRAG_HOLD_MS
+    int "IQS9151 single-finger TapDrag second-touch drag confirm time (ms)"
+    range 0 1000
+    default 0
+    help
+      Down duration of the 1F TapDrag second touch after which it is
+      confirmed as a drag instead of a click (driver-side). 0 falls back
+      to INPUT_IQS9151_1F_TAP_MAX_MS.
 
 config INPUT_IQS9151_CURSOR_INERTIA_ENABLE
     bool "IQS9151 cursor inertia enable"
@@ -239,6 +375,44 @@ config INPUT_IQS9151_2F_SCROLL_START_MOVE
     help
       Movement threshold to start 2F scroll mode (driver-side).
 
+config INPUT_IQS9151_2F_SCROLL_SLOW_SPEED
+    int "IQS9151 two-finger scroll slow-speed threshold"
+    range 0 500
+    default 4
+    help
+      Per-frame centroid movement (counts) at or below which 2F scroll
+      is considered slow and INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100 is
+      applied (driver-side).
+
+config INPUT_IQS9151_2F_SCROLL_FAST_SPEED
+    int "IQS9151 two-finger scroll fast-speed threshold"
+    range 0 500
+    default 40
+    help
+      Per-frame centroid movement (counts) at or above which 2F scroll
+      is considered fast and INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100 is
+      applied (driver-side).
+
+config INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100
+    int "IQS9151 two-finger scroll slow-speed gain (x100)"
+    range 0 400
+    default 100
+    help
+      Gain applied to 2F scroll output at or below the slow-speed
+      threshold (100 = 1.0x). Between the slow and fast thresholds the
+      gain is linearly interpolated. This multiplies the devicetree
+      zip_scroll_accel_* curve rather than replacing it.
+
+config INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100
+    int "IQS9151 two-finger scroll fast-speed gain (x100)"
+    range 0 400
+    default 100
+    help
+      Gain applied to 2F scroll output at or above the fast-speed
+      threshold (100 = 1.0x). Between the slow and fast thresholds the
+      gain is linearly interpolated. This multiplies the devicetree
+      zip_scroll_accel_* curve rather than replacing it.
+
 config INPUT_IQS9151_SCROLL_INERTIA_ENABLE
     bool "IQS9151 scroll inertia enable"
     default y
@@ -305,6 +479,15 @@ config INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10
       Gain for 2F pinch REL_WHEEL output inside the driver.
       10 = 1.0x, 20 = 2.0x, 5 = 0.5x.
 
+config INPUT_IQS9151_2F_PINCH_RATIO_X10
+    int "IQS9151 two-finger pinch/scroll ratio (x10)"
+    range 5 50
+    default 15
+    help
+      Pinch is chosen over scroll when the accumulated distance change is at
+      least ratio/10 times the accumulated centroid movement.
+      15 = 1.5x, 10 = 1.0x, 30 = 3.0x.
+
 config INPUT_IQS9151_3F_TAP_ENABLE
     bool "IQS9151 three-finger tap enable"
     default y
@@ -347,6 +530,69 @@ config INPUT_IQS9151_3F_SWIPE_THRESHOLD
     default 200
     help
       Three-finger swipe threshold (driver-side).
+
+config INPUT_IQS9151_CURSOR_REPORT_INTERVAL_MS
+    int "IQS9151 cursor report interval (ms)"
+    range 0 100
+    default 0
+    help
+      Minimum interval between REL_X/REL_Y reports for single-finger
+      cursor movement (driver-side). Movement within the interval is
+      accumulated and sent as one report. 0 sends a report for every
+      frame. Try 16 to 25 when reports pile up on a BLE link.
+
+config INPUT_IQS9151_SCROLL_REPORT_INTERVAL_MS
+    int "IQS9151 scroll report interval (ms)"
+    range 0 100
+    default 0
+    help
+      Minimum interval between WHEEL/HWHEEL reports for two-finger
+      scroll (driver-side). Scroll within the interval is accumulated
+      and sent as one report. 0 sends a report for every frame. Try 16
+      to 25 when reports pile up on a BLE link.
+
+config INPUT_IQS9151_THREAD_PRIORITY
+    int "IQS9151 dedicated work queue thread priority"
+    default 2
+    help
+      Priority of the driver's dedicated work queue thread, which runs
+      frame processing off the system work queue. Keep it lower priority
+      (higher numeric value) than the system work queue (-1) and the ZMK
+      input thread (0), but higher priority (lower numeric value) than
+      the BLE/split TX thread (5).
+
+config INPUT_IQS9151_THREAD_STACK_SIZE
+    int "IQS9151 dedicated work queue thread stack size"
+    default 3072
+    help
+      Stack size in bytes for the driver's dedicated work queue thread.
+
+config INPUT_IQS9151_HOLD_COMMS_WINDOW
+    bool "Hold the IQS9151 communication window until explicitly terminated"
+    default y
+    help
+      Set the Terminate Comms Window bit so the RDY window stays open until
+      the driver writes the 0xEEEE terminate command after reading a frame.
+      Without this the window closes before the driver thread reads and every
+      read clock-stretches until the next sensing cycle (one cycle of extra
+      latency, up to hundreds of ms in low-power modes).
+
+config INPUT_IQS9151_SHELL
+    bool "IQS9151 tp shell command"
+    depends on SHELL
+    default n
+    help
+      Add the "tp" shell command to inspect and change gesture and
+      sensitivity parameters at runtime (used by tools/tp-tuner).
+
+config INPUT_IQS9151_SETTINGS
+    bool "IQS9151 runtime parameter persistence"
+    depends on SETTINGS
+    default y if SETTINGS
+    help
+      Store the runtime parameters with the Zephyr settings subsystem
+      under "iqs9151/params" and apply them on settings_load(). Saving
+      is explicit ("tp save"); "tp reset" also deletes the saved blob.
 
 config INPUT_IQS9151_TEST
     bool "IQS9151 test hooks"
