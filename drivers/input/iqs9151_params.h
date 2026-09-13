@@ -20,7 +20,7 @@ enum iqs9151_param_kind {
 
 /*
  * X(field, name, default, min, max, kind, reg)
- * IC 系 17 個を先頭に置く。index を IC 書き込みの保留ビットに使う。
+ * IC 系 20 個を先頭に置く。index を IC 書き込みの保留ビットに使う。
  */
 #define IQS9151_PARAM_LIST(X)                                                                   \
     X(touch_set_threshold, "touch_set_threshold", CONFIG_INPUT_IQS9151_TOUCH_SET_THRESHOLD,     \
@@ -76,7 +76,7 @@ enum iqs9151_param_kind {
     X(dynamic_filter_top_speed, "dynamic_filter_top_speed",                                     \
       CONFIG_INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED, 0, 2047, IQS9151_PARAM_IC_U16,             \
       IQS9151_ADDR_XY_DYNAMIC_FILTER_TOP_SPEED)                                                 \
-    /* ここまで IC 系 17 個 */                                                                   \
+    /* ここまで IC 系 20 個 */                                                                   \
     X(f1_tap_enable, "1f_tap_enable", IS_ENABLED(CONFIG_INPUT_IQS9151_1F_TAP_ENABLE), 0, 1,     \
       IQS9151_PARAM_DRIVER_BOOL, 0)                                                             \
     X(f1_tap_max_ms, "1f_tap_max_ms", CONFIG_INPUT_IQS9151_1F_TAP_MAX_MS, 1, 1000,              \
