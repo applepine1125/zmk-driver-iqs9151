@@ -27,6 +27,12 @@ LOG_MODULE_REGISTER(iqs9151, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 /*
  * フレーム処理を syswq から切り離す専用ワークキュー。複数インスタンスでも
  * 1 本を共有し、2 台目以降の init では start しない。
+ *
+ * フレーム処理と 1 本指の離しの猶予ワーク(one_finger_release_grace_work)は、
+ * 必ずこの 1 本のキューで動かすこと。単一スレッドで直列に動くことが、
+ * iqs9151_one_finger_reset() での取り消しと猶予ワークの競合を防いでいる。
+ * 別のキューや ISR から投入すると、二重にボタンを離す・解放済みの状態を
+ * 触る、といった競合が復活する。
  */
 K_KERNEL_STACK_DEFINE(iqs9151_work_q_stack, CONFIG_INPUT_IQS9151_THREAD_STACK_SIZE);
 static struct k_work_q iqs9151_work_q;
@@ -1669,7 +1675,7 @@ static void iqs9151_two_finger_result_reset(struct iqs9151_two_finger_result *re
 /*
  * TapDrag の2回目接触(hold_sent)を終わらせる共通処理。フレーム経由の即時確定と、
  * 猶予ワーク経由のタイムアウト確定の両方から呼ばれる。second_tap_detected の判定に
- * 使う frame_count_zero は、呼び出し元がフレームの指本数から渡す(タイムアウト確定は
+ * 使う finger_count_zero は、呼び出し元がフレームの指本数から渡す(タイムアウト確定は
  * 常に指が離れたままなので true になる)。
  */
 static bool iqs9151_one_finger_finish_drag(struct iqs9151_data *data,
