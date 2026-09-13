@@ -1746,7 +1746,13 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         return false;
     }
 
-    if (frame->finger_count == 0U && p->f1_release_grace_ms > 0) {
+    /*
+     * hold_sent が立っている(=ボタンを保持したドラッグ中の)場合だけ猶予を適用する。
+     * 1 回目のタップの離しにも猶予をかけると、その離しで確定するはずの
+     * one_finger_click_pending が遅れてしまい、素早い 2 回目接触が TapDrag と
+     * 認識されず「同じ接触の続き」に化けてしまう。
+     */
+    if (frame->finger_count == 0U && p->f1_release_grace_ms > 0 && state->hold_sent) {
         if (!state->release_pending) {
             state->release_pending = true;
             state->release_pending_ms = now_ms;
