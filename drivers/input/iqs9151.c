@@ -393,6 +393,7 @@ struct iqs9151_data {
     struct gpio_callback gpio_cb;
     struct k_work work;
     struct k_work_delayable one_finger_click_work;
+    struct k_work_delayable one_finger_release_grace_work;
     struct k_work_delayable two_finger_click_work;
     struct k_work_delayable three_finger_click_work;
     struct k_work_delayable inertia_scroll_work;
@@ -1613,7 +1614,14 @@ static int32_t iqs9151_two_finger_scroll_gain_x100(const struct iqs9151_params *
                                  (fast_speed - slow_speed));
 }
 
-static void iqs9151_one_finger_reset(struct iqs9151_one_finger_state *state) {
+/*
+ * 猶予中のリリース確定ワークは、指の再接触・2本指以上への遷移・切断など
+ * どの理由でこの状態をリセットしても取り消す。ここに集約することで、
+ * 呼び出し側で個別に取り消し漏れが起きないようにする。
+ */
+static void iqs9151_one_finger_reset(struct iqs9151_data *data) {
+    struct iqs9151_one_finger_state *state = &data->one_finger;
+
     state->active = false;
     state->hold_sent = false;
     state->tap_candidate = false;
@@ -1626,6 +1634,7 @@ static void iqs9151_one_finger_reset(struct iqs9151_one_finger_state *state) {
     state->dy = 0;
     state->last_x = 0;
     state->last_y = 0;
+    (void)k_work_cancel_delayable(&data->one_finger_release_grace_work);
 }
 
 static int32_t iqs9151_one_finger_drag_hold_threshold_ms(const struct iqs9151_params *p) {
@@ -1655,6 +1664,57 @@ static void iqs9151_two_finger_reset(struct iqs9151_two_finger_state *state) {
 
 static void iqs9151_two_finger_result_reset(struct iqs9151_two_finger_result *result) {
     memset(result, 0, sizeof(*result));
+}
+
+/*
+ * TapDrag の2回目接触(hold_sent)を終わらせる共通処理。フレーム経由の即時確定と、
+ * 猶予ワーク経由のタイムアウト確定の両方から呼ばれる。second_tap_detected の判定に
+ * 使う frame_count_zero は、呼び出し元がフレームの指本数から渡す(タイムアウト確定は
+ * 常に指が離れたままなので true になる)。
+ */
+static bool iqs9151_one_finger_finish_drag(struct iqs9151_data *data,
+                                           const struct iqs9151_params *p,
+                                           const struct device *dev,
+                                           int64_t release_ms,
+                                           bool finger_count_zero) {
+    struct iqs9151_one_finger_state *state = &data->one_finger;
+    const int64_t elapsed_ms = release_ms - state->down_ms;
+    const bool second_tap_detected =
+        finger_count_zero &&
+        state->hold_candidate &&
+        elapsed_ms <= iqs9151_one_finger_drag_hold_threshold_ms(p) &&
+        iqs9151_abs32(state->dx) <= p->f1_tap_move &&
+        iqs9151_abs32(state->dy) <= p->f1_tap_move;
+    const bool released_from_hold = state->hold_sent;
+
+    if (state->hold_sent) {
+        iqs9151_release_hold(data, dev);
+    }
+    if (second_tap_detected && (p->f1_tap_enable != 0)) {
+        (void)iqs9151_emit_click(data, dev, INPUT_BTN_0);
+    }
+    iqs9151_one_finger_reset(data);
+    return released_from_hold;
+}
+
+/*
+ * 1本指の離しの猶予(f1_release_grace_ms)が切れたときの確定処理。
+ * イベントモードでは指を上げた後にフレームが来ないため、フレーム経由の
+ * 確定だけに頼るとボタンが離されないまま残る。猶予に入った時点でこのワークを
+ * 予約し、フレームが来なくても期限どおりにリリースする。
+ */
+static void iqs9151_one_finger_release_grace_work_cb(struct k_work *work) {
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct iqs9151_data *data =
+        CONTAINER_OF(dwork, struct iqs9151_data, one_finger_release_grace_work);
+    struct iqs9151_one_finger_state *state = &data->one_finger;
+
+    if (!state->active || !state->release_pending) {
+        return;
+    }
+
+    (void)iqs9151_one_finger_finish_drag(data, &data->params, data->dev,
+                                         state->release_pending_ms, true);
 }
 
 static bool iqs9151_one_finger_update(struct iqs9151_data *data,
@@ -1718,6 +1778,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         if (state->release_pending) {
             state->release_pending = false;
             state->release_pending_ms = 0;
+            (void)k_work_cancel_delayable(&data->one_finger_release_grace_work);
             if (have_xy) {
                 state->last_x = x;
                 state->last_y = y;
@@ -1756,6 +1817,15 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         if (!state->release_pending) {
             state->release_pending = true;
             state->release_pending_ms = now_ms;
+            /*
+             * イベントモードでは指を上げた後にフレームが来ない場合があるため、
+             * フレーム到着に頼らずワークキュー側でも猶予の満了を検知する。
+             * data->work と同じ iqs9151_work_q 上で直列に実行されるので、
+             * このワークとフレーム経由の確定が同時に走ることはない。
+             */
+            (void)k_work_reschedule_for_queue(&iqs9151_work_q,
+                                              &data->one_finger_release_grace_work,
+                                              K_MSEC(p->f1_release_grace_ms));
             return false;
         }
 
@@ -1765,29 +1835,16 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
             return false;
         }
 
+        /* ワークが発火するより先にフレーム側で猶予切れを検知したので、予約を取り消す */
+        (void)k_work_cancel_delayable(&data->one_finger_release_grace_work);
         release_ms = state->release_pending_ms;
         state->release_pending = false;
         state->release_pending_ms = 0;
     }
 
     if (state->tapdrag_second_touch) {
-        const int64_t elapsed_ms = release_ms - state->down_ms;
-        const bool second_tap_detected =
-            (frame->finger_count == 0U) &&
-            state->hold_candidate &&
-            elapsed_ms <= drag_hold_ms &&
-            iqs9151_abs32(state->dx) <= p->f1_tap_move &&
-            iqs9151_abs32(state->dy) <= p->f1_tap_move;
-
-        released_from_hold = state->hold_sent;
-        if (state->hold_sent) {
-            iqs9151_release_hold(data, dev);
-        }
-        if (second_tap_detected &&
-            (p->f1_tap_enable != 0)) {
-            (void)iqs9151_emit_click(data, dev, INPUT_BTN_0);
-        }
-        iqs9151_one_finger_reset(state);
+        released_from_hold = iqs9151_one_finger_finish_drag(data, p, dev, release_ms,
+                                                             frame->finger_count == 0U);
         return released_from_hold;
     }
 
@@ -1820,7 +1877,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         (void)k_work_cancel_delayable(&data->one_finger_click_work);
     }
 
-    iqs9151_one_finger_reset(state);
+    iqs9151_one_finger_reset(data);
     return released_from_hold;
 }
 
@@ -2404,7 +2461,7 @@ static void iqs9151_reset_gesture_states(struct iqs9151_data *data,
         iqs9151_release_hold(data, dev);
     }
 
-    iqs9151_one_finger_reset(&data->one_finger);
+    iqs9151_one_finger_reset(data);
     iqs9151_two_finger_reset(&data->two_finger);
     iqs9151_clear_one_finger_click_pending(data);
     iqs9151_clear_two_finger_click_pending(data);
@@ -2724,7 +2781,7 @@ static bool iqs9151_update_gesture_sessions(struct iqs9151_data *data,
             iqs9151_release_hold(data, dev);
             released_from_hold = true;
         }
-        iqs9151_one_finger_reset(&data->one_finger);
+        iqs9151_one_finger_reset(data);
     } else {
         data->three_finger_one_lead_valid = false;
     }
@@ -2770,7 +2827,7 @@ static bool iqs9151_update_gesture_sessions(struct iqs9151_data *data,
             iqs9151_release_hold(data, dev);
             released_from_hold = true;
         }
-        iqs9151_one_finger_reset(&data->one_finger);
+        iqs9151_one_finger_reset(data);
     } else {
         data->two_finger_one_lead_valid = false;
     }
@@ -3445,6 +3502,8 @@ static int iqs9151_init(const struct device *dev) {
     // Setup IRQ Call Back
     k_work_init(&data->work, iqs9151_work_cb);
     k_work_init_delayable(&data->one_finger_click_work, iqs9151_one_finger_click_work_cb);
+    k_work_init_delayable(&data->one_finger_release_grace_work,
+                          iqs9151_one_finger_release_grace_work_cb);
     k_work_init_delayable(&data->two_finger_click_work, iqs9151_two_finger_click_work_cb);
     k_work_init_delayable(&data->three_finger_click_work, iqs9151_three_finger_click_work_cb);
     k_work_init_delayable(&data->inertia_scroll_work, iqs9151_inertia_scroll_work_cb);
@@ -3459,7 +3518,7 @@ static int iqs9151_init(const struct device *dev) {
     iqs9151_ema_reset(&data->cursor_ema_x_fp, &data->cursor_ema_y_fp);
     iqs9151_motion_history_reset(&data->scroll_motion_history);
     iqs9151_motion_history_reset(&data->cursor_motion_history);
-    iqs9151_one_finger_reset(&data->one_finger);
+    iqs9151_one_finger_reset(data);
     iqs9151_two_finger_reset(&data->two_finger);
     iqs9151_clear_one_finger_click_pending(data);
     iqs9151_clear_two_finger_click_pending(data);
@@ -3511,6 +3570,8 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     iqs9151_sync_inertia_params(data);
     k_work_init(&data->work, iqs9151_work_cb);
     k_work_init_delayable(&data->one_finger_click_work, iqs9151_one_finger_click_work_cb);
+    k_work_init_delayable(&data->one_finger_release_grace_work,
+                          iqs9151_one_finger_release_grace_work_cb);
     k_work_init_delayable(&data->two_finger_click_work, iqs9151_two_finger_click_work_cb);
     k_work_init_delayable(&data->three_finger_click_work, iqs9151_three_finger_click_work_cb);
     k_work_init_delayable(&data->inertia_scroll_work, iqs9151_inertia_scroll_work_cb);
@@ -3525,7 +3586,7 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     iqs9151_ema_reset(&data->cursor_ema_x_fp, &data->cursor_ema_y_fp);
     iqs9151_motion_history_reset(&data->scroll_motion_history);
     iqs9151_motion_history_reset(&data->cursor_motion_history);
-    iqs9151_one_finger_reset(&data->one_finger);
+    iqs9151_one_finger_reset(data);
     iqs9151_two_finger_reset(&data->two_finger);
     iqs9151_clear_one_finger_click_pending(data);
     iqs9151_clear_two_finger_click_pending(data);
@@ -3543,6 +3604,7 @@ void iqs9151_test_cancel_pending_work(void *ctx) {
     struct iqs9151_data *data = (struct iqs9151_data *)ctx;
 
     (void)k_work_cancel_delayable(&data->one_finger_click_work);
+    (void)k_work_cancel_delayable(&data->one_finger_release_grace_work);
     (void)k_work_cancel_delayable(&data->two_finger_click_work);
     (void)k_work_cancel_delayable(&data->three_finger_click_work);
     (void)k_work_cancel_delayable(&data->inertia_scroll_work);
