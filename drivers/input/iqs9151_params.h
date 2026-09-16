@@ -199,6 +199,9 @@ size_t iqs9151_param_count(void);
 const struct iqs9151_param_def *iqs9151_param_def_at(size_t idx);
 const struct iqs9151_param_def *iqs9151_param_find(const char *name);
 bool iqs9151_param_is_ic(const struct iqs9151_param_def *def);
+/* tp list に出さない(調整ツールから触れない)パラメータ。get/set は使える */
+bool iqs9151_param_is_hidden(const struct iqs9151_param_def *def);
+size_t iqs9151_param_hidden_count(void);
 const char *iqs9151_param_kind_str(enum iqs9151_param_kind kind);
 void iqs9151_params_init(struct iqs9151_params *p);
 int iqs9151_params_set(struct iqs9151_params *p, const struct iqs9151_param_def *def,

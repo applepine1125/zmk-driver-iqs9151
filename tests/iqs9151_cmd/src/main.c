@@ -78,14 +78,34 @@ static void iqs9151_cmd_before(void *fixture_ptr) {
     iqs9151_test_context_init(fixture->ctx, NULL);
 }
 
-/* list は 68 個ぜんぶを 1 行ずつ返し、先頭行は touch_set_threshold の定義になる */
+/* list は非表示以外を 1 行ずつ返し、先頭行は touch_set_threshold の定義になる */
 ZTEST_F(iqs9151_cmd, test_list_returns_all_params_with_expected_format) {
+    int ret = run(fixture, "list");
+    const size_t expected = iqs9151_param_count() - iqs9151_param_hidden_count();
+
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_equal(fixture->log.count, expected, "count=%u expected=%u",
+                  (unsigned int)fixture->log.count, (unsigned int)expected);
+    zassert_equal(strcmp(fixture->log.lines[0], "touch_set_threshold 30 0 255 ic_u8 30"), 0,
+                  "line0=%s", fixture->log.lines[0]);
+}
+
+/* 非表示のパラメータは list に出ないが、get と set は名前で使える */
+ZTEST_F(iqs9151_cmd, test_hidden_params_are_omitted_from_list_but_gettable) {
     int ret = run(fixture, "list");
 
     zassert_equal(ret, 0, "ret=%d", ret);
-    zassert_equal(fixture->log.count, 68U, "count=%u", (unsigned int)fixture->log.count);
-    zassert_equal(strcmp(fixture->log.lines[0], "touch_set_threshold 30 0 255 ic_u8 30"), 0,
-                  "line0=%s", fixture->log.lines[0]);
+    for (size_t i = 0; i < fixture->log.count; i++) {
+        zassert_is_null(strstr(fixture->log.lines[i], "ati_targetcount "), "line=%s",
+                        fixture->log.lines[i]);
+        zassert_is_null(strstr(fixture->log.lines[i], "2f_presshold_enable "), "line=%s",
+                        fixture->log.lines[i]);
+    }
+    ret = run(fixture, "set ati_targetcount 500");
+    zassert_equal(ret, 0, "ret=%d", ret);
+    ret = run(fixture, "get ati_targetcount");
+    zassert_equal(ret, 0, "ret=%d", ret);
+    zassert_not_null(strstr(fixture->log.lines[0], "500"), "line=%s", fixture->log.lines[0]);
 }
 
 /* info は side/uptime/params/saved を 1 行で返す */

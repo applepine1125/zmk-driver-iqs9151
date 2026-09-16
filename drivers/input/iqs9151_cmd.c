@@ -72,6 +72,9 @@ static int cmd_list(const struct device *dev, size_t argc, iqs9151_cmd_out_t out
         const struct iqs9151_param_def *def = iqs9151_param_def_at(i);
         int32_t value = 0;
 
+        if (iqs9151_param_is_hidden(def)) {
+            continue;
+        }
         (void)iqs9151_dev_param_get(device, def->name, &value);
         cmd_out(out, ctx, "%s %d %d %d %s %d", def->name, value, def->min, def->max,
                 iqs9151_param_kind_str(def->kind), def->def);

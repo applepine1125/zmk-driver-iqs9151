@@ -101,3 +101,20 @@ ZTEST(iqs9151_params, test_kind_str_returns_fixed_strings) {
     zassert_true(strcmp(iqs9151_param_kind_str(IQS9151_PARAM_DRIVER_BOOL), "driver_bool") == 0,
                  NULL);
 }
+
+/* 非表示リストの名前はすべて定義テーブルに存在し、22 個ある */
+ZTEST(iqs9151_params, test_hidden_names_all_exist_in_table) {
+    size_t hidden = 0;
+
+    for (size_t i = 0; i < iqs9151_param_count(); i++) {
+        if (iqs9151_param_is_hidden(iqs9151_param_def_at(i))) {
+            hidden++;
+        }
+    }
+    zassert_equal(hidden, iqs9151_param_hidden_count(),
+                  "テーブルに無い名前が非表示リストにある: table=%u list=%u", (unsigned int)hidden,
+                  (unsigned int)iqs9151_param_hidden_count());
+    zassert_equal(hidden, 22U, "hidden=%u", (unsigned int)hidden);
+    zassert_false(iqs9151_param_is_hidden(iqs9151_param_find("1f_tap_max_ms")), NULL);
+    zassert_true(iqs9151_param_is_hidden(iqs9151_param_find("ati_targetcount")), NULL);
+}

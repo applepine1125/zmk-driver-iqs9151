@@ -447,8 +447,7 @@ config INPUT_IQS9151_2F_SCROLL_SLOW_GAIN_X100
     help
       Gain applied to 2F scroll output at or below the slow-speed
       threshold (100 = 1.0x). Between the slow and fast thresholds the
-      gain is linearly interpolated. This multiplies the devicetree
-      zip_scroll_accel_* curve rather than replacing it.
+      gain is linearly interpolated.
 
 config INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100
     int "IQS9151 two-finger scroll fast-speed gain (x100)"
@@ -457,8 +456,7 @@ config INPUT_IQS9151_2F_SCROLL_FAST_GAIN_X100
     help
       Gain applied to 2F scroll output at or above the fast-speed
       threshold (100 = 1.0x). Between the slow and fast thresholds the
-      gain is linearly interpolated. This multiplies the devicetree
-      zip_scroll_accel_* curve rather than replacing it.
+      gain is linearly interpolated.
 
 config INPUT_IQS9151_SCROLL_INERTIA_ENABLE
     bool "IQS9151 scroll inertia enable"
