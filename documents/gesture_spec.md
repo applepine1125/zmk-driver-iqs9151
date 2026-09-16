@@ -184,7 +184,7 @@
       その間は線形補間（整数除算）
     - `SLOW_SPEED >= FAST_SPEED` のときは補間せず二値にする（ゼロ除算回避）
     - 端数は軸ごとに持ち越し、Scroll 開始時と `mode==NONE` 復帰時にリセットする
-    - 既定はどちらも 100（等倍）で、devicetree の `zip_scroll_accel_*` とは別に掛かる
+    - 既定はどちらも 100（等倍）
   - Scroll Inertia:
     - `scroll_ended` 時に、直近
       `CONFIG_INPUT_IQS9151_SCROLL_INERTIA_RECENT_WINDOW_MS` ms の
