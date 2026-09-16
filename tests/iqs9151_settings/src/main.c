@@ -140,7 +140,7 @@ static size_t blob_size(void) {
 ZTEST(iqs9151_settings, test_encode_decode_round_trip) {
     struct iqs9151_params src;
     struct iqs9151_params dst;
-    uint8_t buf[256];
+    uint8_t buf[512];
     int ret;
 
     iqs9151_params_init(&src);
@@ -172,7 +172,7 @@ ZTEST(iqs9151_settings, test_encode_rejects_small_buffer) {
 ZTEST(iqs9151_settings, test_decode_rejects_count_mismatch) {
     struct iqs9151_params src;
     struct iqs9151_params dst;
-    uint8_t buf[256];
+    uint8_t buf[512];
     int len;
 
     iqs9151_params_init(&src);
@@ -189,7 +189,7 @@ ZTEST(iqs9151_settings, test_decode_rejects_count_mismatch) {
 ZTEST(iqs9151_settings, test_decode_rejects_version_mismatch) {
     struct iqs9151_params src;
     struct iqs9151_params dst;
-    uint8_t buf[256];
+    uint8_t buf[512];
     int len;
 
     iqs9151_params_init(&src);
@@ -203,7 +203,7 @@ ZTEST(iqs9151_settings, test_decode_rejects_version_mismatch) {
 ZTEST(iqs9151_settings, test_decode_rejects_length_mismatch) {
     struct iqs9151_params src;
     struct iqs9151_params dst;
-    uint8_t buf[256];
+    uint8_t buf[512];
     int len;
 
     iqs9151_params_init(&src);
@@ -247,7 +247,7 @@ ZTEST_F(iqs9151_settings, test_save_then_load_restores_values) {
 ZTEST_F(iqs9151_settings, test_load_ignores_count_mismatch_blob) {
     const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
     struct iqs9151_params src;
-    uint8_t buf[256];
+    uint8_t buf[512];
     int32_t value = 0;
     int len;
 
@@ -292,7 +292,7 @@ ZTEST_F(iqs9151_settings, test_load_ignores_oversized_blob) {
 ZTEST_F(iqs9151_settings, test_load_skips_out_of_range_value) {
     const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
     struct iqs9151_params src;
-    uint8_t buf[256];
+    uint8_t buf[512];
     int32_t value = 0;
     int len;
 
@@ -339,12 +339,12 @@ ZTEST_F(iqs9151_settings, test_tp_info_reports_saved_flag) {
     const char *out;
 
     out = run_tp("tp info");
-    zassert_not_null(strstr(out, "params=63 saved=no"), "out=%s", out);
+    zassert_not_null(strstr(out, "params=67 saved=no"), "out=%s", out);
 
     zassert_equal(iqs9151_settings_save(dev), 0, NULL);
 
     out = run_tp("tp info");
-    zassert_not_null(strstr(out, "params=63 saved=yes"), "out=%s", out);
+    zassert_not_null(strstr(out, "params=67 saved=yes"), "out=%s", out);
 }
 
 ZTEST_SUITE(iqs9151_settings, NULL, iqs9151_settings_setup, iqs9151_settings_before, NULL, NULL);
