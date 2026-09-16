@@ -2044,6 +2044,24 @@ ZTEST_F(iqs9151_work_cb, test_ic_param_set_marks_dirty_bit) {
     zassert_equal(iqs9151_test_ic_dirty(fixture->ctx), BIT(idx), NULL);
 }
 
+/* finger_split_factor は IC 系(0x11F1)として登録され、set すると保留ビットが立つ */
+ZTEST_F(iqs9151_work_cb, test_finger_split_factor_is_ic_param_and_marks_dirty_bit) {
+    const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);
+    const struct iqs9151_param_def *def = iqs9151_param_find("finger_split_factor");
+    size_t idx = 0;
+
+    zassert_not_null(def, "finger_split_factor が定義されていない");
+    zassert_equal(def->kind, IQS9151_PARAM_IC_U8, NULL);
+    zassert_equal(def->reg, 0x11F1, "reg=0x%04x", def->reg);
+    zassert_equal(def->def, 3, "def=%d", def->def);
+    while (iqs9151_param_def_at(idx) != def) {
+        idx++;
+    }
+    zassert_true(idx < IQS9151_PARAM_IC_COUNT, "IC 系の並びの外にある idx=%u", (unsigned int)idx);
+    zassert_equal(iqs9151_dev_param_set(dev, "finger_split_factor", 5), 0, NULL);
+    zassert_equal(iqs9151_test_ic_dirty(fixture->ctx), BIT(idx), NULL);
+}
+
 /* 未知の名前と範囲外の値を set すると、エラーになる */
 ZTEST_F(iqs9151_work_cb, test_unknown_name_and_out_of_range_return_errors) {
     const struct device *dev = iqs9151_test_fake_dev(fixture->ctx);

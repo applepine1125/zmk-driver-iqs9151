@@ -206,6 +206,15 @@ config INPUT_IQS9151_STATIONARY_TOUCH_MOV_THRESHOLD
     help
       Stationary Touch Movement Threshold (0x11F0).
 
+config INPUT_IQS9151_FINGER_SPLIT_FACTOR
+    int "IQS9151 finger split factor"
+    range 0 255
+    default 3
+    help
+      Finger Split Factor (0x11F1). How aggressively adjacent touches are
+      split into separate fingers. 0 never splits (touching fingers are
+      counted as one); higher values split more readily.
+
 config INPUT_IQS9151_JITTER_FILTER_DELTA
     int "IQS9151 jitter filter delta threshold"
     range 0 255
