@@ -2872,4 +2872,113 @@ ZTEST(iqs9151_work_cb, test_frame_format_matches_expected_string) {
     zassert_equal(ret, (int)strlen(buf), "ret=%d", ret);
 }
 
+static void set_cursor_gain_params(struct iqs9151_work_cb_fixture *fixture, int32_t slow_speed,
+                                   int32_t fast_speed, int32_t slow_gain, int32_t fast_gain) {
+    set_driver_param(fixture, "cursor_inertia_enable", 0);
+    set_driver_param(fixture, "cursor_slow_speed", slow_speed);
+    set_driver_param(fixture, "cursor_fast_speed", fast_speed);
+    set_driver_param(fixture, "cursor_slow_gain_x100", slow_gain);
+    set_driver_param(fixture, "cursor_fast_gain_x100", fast_gain);
+}
+
+/* 速度がゆっくりのしきい値以下のとき、1F で動かすと slow gain が掛かった量が REL X/Y で送られる */
+ZTEST_F(iqs9151_work_cb, test_cursor_speed_at_or_below_slow_speed_applies_slow_gain) {
+    const struct iqs9151_test_frame move = make_cursor_move_frame(4, 4, 100);
+
+    set_cursor_gain_params(fixture, 10, 90, 50, 100);
+
+    iqs9151_test_process_frame(fixture->ctx, &move, 0);
+
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_X, 2, false);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_Y, 2, true);
+}
+
+/* 速度が速いしきい値以上のとき、1F で動かすと fast gain が掛かった量が REL X/Y で送られる */
+ZTEST_F(iqs9151_work_cb, test_cursor_speed_at_or_above_fast_speed_applies_fast_gain) {
+    const struct iqs9151_test_frame move = make_cursor_move_frame(50, -50, 100);
+
+    set_cursor_gain_params(fixture, 10, 90, 100, 200);
+
+    iqs9151_test_process_frame(fixture->ctx, &move, 0);
+
+    zassert_equal(fixture->log.count, 2U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_X, 100, false);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_Y, -100, true);
+}
+
+/* 速度がしきい値の間のとき、1F で動かし続けると線形補間したゲインが掛かり、端数は次のフレームに持ち越される */
+ZTEST_F(iqs9151_work_cb, test_cursor_speed_between_thresholds_interpolates_gain_and_carries_remainder) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(25, 25, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(25, 25, 125);
+
+    set_cursor_gain_params(fixture, 10, 90, 100, 200);
+
+    iqs9151_test_process_frame(fixture->ctx, &move_1, 0);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, 10);
+
+    /* 速度 50 → ゲイン 150 → 37.5: 1 回目は 37、端数 0.5 を足した 2 回目は 38 */
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[0], INPUT_REL_X, 37, false);
+    assert_rel_event(&fixture->log.events[1], INPUT_REL_Y, 37, true);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 38, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 38, true);
+}
+
+/* 端数を持ち越した状態で指を離すと、次に触れて動かしたときの端数は 0 から始まる */
+ZTEST_F(iqs9151_work_cb, test_cursor_gain_remainder_resets_on_release) {
+    const struct iqs9151_test_frame move = make_cursor_move_frame(25, 25, 100);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    set_cursor_gain_params(fixture, 10, 90, 100, 200);
+
+    /* 1F のタップ判定は実時間(k_uptime)で見るため、1F_TAP_MAX_MS=120 を超えて触れてから離す */
+    iqs9151_test_process_frame(fixture->ctx, &move, 0);
+    k_msleep(150);
+    iqs9151_test_process_frame(fixture->ctx, &release, 150);
+    iqs9151_test_process_frame(fixture->ctx, &move, 160);
+
+    zassert_equal(fixture->log.count, 4U, "events=%u", (unsigned int)fixture->log.count);
+    assert_rel_event(&fixture->log.events[2], INPUT_REL_X, 37, false);
+    assert_rel_event(&fixture->log.events[3], INPUT_REL_Y, 37, true);
+}
+
+/* ゲイン前の速度では慣性の最低速度に届かないとき、ゲイン後の速度が届いていれば離した後に慣性が始まる */
+ZTEST_F(iqs9151_work_cb, test_cursor_inertia_uses_gained_speed) {
+    const struct iqs9151_test_frame move_1 = make_cursor_move_frame(12, 0, 100);
+    const struct iqs9151_test_frame move_2 = make_cursor_move_frame(12, 0, 112);
+    const struct iqs9151_test_frame move_3 = make_cursor_move_frame(12, 0, 124);
+    const struct iqs9151_test_frame release = make_frame(0U, 0U, 0, 0, 0, 0, 0, 0, 0);
+
+    set_cursor_gain_params(fixture, 10, 10, 100, 100);
+    set_driver_param(fixture, "cursor_inertia_enable", 1);
+    set_driver_param(fixture, "cursor_inertia_recent_window_ms", 60);
+    set_driver_param(fixture, "cursor_inertia_stale_gap_ms", 35);
+    set_driver_param(fixture, "cursor_inertia_min_samples", 2);
+    set_driver_param(fixture, "cursor_inertia_min_avg_speed", 30);
+
+    /* 1F のタップ判定は実時間(k_uptime)で見るため、1F_TAP_MAX_MS=120 を超えて触れてから離し、
+     * タップ→タップドラッグの経路に入らないようにする。慣性の判定はフレームに渡した時刻で行われ、
+     * 直近 60ms の 2 サンプル(190ms と 200ms)を見る */
+
+    /* 等倍: 窓内 2 フレームで 24 移動 → 平均速度 24 < 30 なので慣性は始まらない */
+    iqs9151_test_process_frame(fixture->ctx, &move_1, 0);
+    k_msleep(150);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, 190);
+    iqs9151_test_process_frame(fixture->ctx, &move_3, 200);
+    iqs9151_test_process_frame(fixture->ctx, &release, 210);
+    zassert_false(iqs9151_test_cursor_inertia_active(fixture->ctx),
+                  "等倍では慣性が始まらないはず");
+
+    /* fast gain 2.0x: 速度 12 >= fast_speed 10 で 24 ずつ → 平均速度 48 >= 30 で慣性が始まる */
+    set_driver_param(fixture, "cursor_fast_gain_x100", 200);
+    iqs9151_test_process_frame(fixture->ctx, &move_1, 1000);
+    k_msleep(150);
+    iqs9151_test_process_frame(fixture->ctx, &move_2, 1190);
+    iqs9151_test_process_frame(fixture->ctx, &move_3, 1200);
+    iqs9151_test_process_frame(fixture->ctx, &release, 1210);
+    zassert_true(iqs9151_test_cursor_inertia_active(fixture->ctx),
+                 "ゲイン後の速度で慣性が始まるはず");
+}
+
 ZTEST_SUITE(iqs9151_work_cb, NULL, iqs9151_work_cb_setup, iqs9151_work_cb_before, NULL, NULL);

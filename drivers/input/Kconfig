@@ -275,6 +275,44 @@ config INPUT_IQS9151_1F_DRAG_HOLD_MS
       confirmed as a drag instead of a click (driver-side). 0 falls back
       to INPUT_IQS9151_1F_TAP_MAX_MS.
 
+config INPUT_IQS9151_CURSOR_SLOW_SPEED
+    int "IQS9151 single-finger cursor slow-speed threshold"
+    range 0 500
+    default 10
+    help
+      Per-frame single-finger movement (counts, |dx|+|dy|) at or below
+      which cursor motion is considered slow and
+      INPUT_IQS9151_CURSOR_SLOW_GAIN_X100 is applied (driver-side).
+
+config INPUT_IQS9151_CURSOR_FAST_SPEED
+    int "IQS9151 single-finger cursor fast-speed threshold"
+    range 0 500
+    default 90
+    help
+      Per-frame single-finger movement (counts, |dx|+|dy|) at or above
+      which cursor motion is considered fast and
+      INPUT_IQS9151_CURSOR_FAST_GAIN_X100 is applied (driver-side).
+
+config INPUT_IQS9151_CURSOR_SLOW_GAIN_X100
+    int "IQS9151 single-finger cursor slow-speed gain (x100)"
+    range 0 400
+    default 100
+    help
+      Gain applied to REL_X/REL_Y at or below the slow-speed threshold
+      (100 = 1.0x). Between the slow and fast thresholds the gain is
+      linearly interpolated. Applied before devicetree input processors
+      such as zip_xy_scaler.
+
+config INPUT_IQS9151_CURSOR_FAST_GAIN_X100
+    int "IQS9151 single-finger cursor fast-speed gain (x100)"
+    range 0 400
+    default 100
+    help
+      Gain applied to REL_X/REL_Y at or above the fast-speed threshold
+      (100 = 1.0x). Between the slow and fast thresholds the gain is
+      linearly interpolated. Applied before devicetree input processors
+      such as zip_xy_scaler.
+
 config INPUT_IQS9151_CURSOR_INERTIA_ENABLE
     bool "IQS9151 cursor inertia enable"
     default y

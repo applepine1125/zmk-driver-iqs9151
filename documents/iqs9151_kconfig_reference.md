@@ -83,6 +83,10 @@
 
 |Symbol|Type|Default|役割|
 | - | - | - | - |
+|`CONFIG_INPUT_IQS9151_CURSOR_SLOW_SPEED`|int|`10`|この速度以下を「ゆっくり」として `CURSOR_SLOW_GAIN_X100` を使う(1F の 1 フレームのマンハッタン距離)。範囲 0〜500|
+|`CONFIG_INPUT_IQS9151_CURSOR_FAST_SPEED`|int|`90`|この速度以上を「速い」として `CURSOR_FAST_GAIN_X100` を使う。範囲 0〜500|
+|`CONFIG_INPUT_IQS9151_CURSOR_SLOW_GAIN_X100`|int|`100`|ゆっくり動かしたときのカーソル移動量ゲイン(x100、100 で等倍)。範囲 0〜400|
+|`CONFIG_INPUT_IQS9151_CURSOR_FAST_GAIN_X100`|int|`100`|速く動かしたときのカーソル移動量ゲイン(x100、100 で等倍)。慣性の速度履歴にもゲイン後の値が入る。範囲 0〜400|
 |`CONFIG_INPUT_IQS9151_CURSOR_INERTIA_ENABLE`|bool|`y`|1Fカーソル慣性 有効/無効|
 |`CONFIG_INPUT_IQS9151_CURSOR_INERTIA_DECAY`|int|`950`|1Fカーソル慣性 減衰率|
 |`CONFIG_INPUT_IQS9151_CURSOR_INERTIA_RECENT_WINDOW_MS`|int|`60`|1Fカーソル慣性の recent-window 判定時間|

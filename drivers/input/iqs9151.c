@@ -414,6 +414,8 @@ struct iqs9151_data {
     int32_t cursor_acc_y;
     bool cursor_acc_valid;
     int64_t last_cursor_report_ms;
+    int32_t cursor_gain_remainder_x;
+    int32_t cursor_gain_remainder_y;
     int32_t scroll_acc_x;
     int32_t scroll_acc_y;
     bool scroll_acc_valid;
@@ -1603,12 +1605,8 @@ static int32_t iqs9151_two_finger_distance(uint16_t x1, uint16_t y1,
  * slow_speed 以下は slow gain、fast_speed 以上は fast gain、間は線形補間。
  * slow_speed >= fast_speed のときはしきい値の間の補間をやめて二値にする。
  */
-static int32_t iqs9151_two_finger_scroll_gain_x100(const struct iqs9151_params *p, int32_t speed) {
-    const int32_t slow_speed = p->f2_scroll_slow_speed;
-    const int32_t fast_speed = p->f2_scroll_fast_speed;
-    const int32_t slow_gain = p->f2_scroll_slow_gain_x100;
-    const int32_t fast_gain = p->f2_scroll_fast_gain_x100;
-
+static int32_t iqs9151_speed_gain_x100(int32_t slow_speed, int32_t fast_speed,
+                                       int32_t slow_gain, int32_t fast_gain, int32_t speed) {
     if (slow_speed >= fast_speed) {
         return (speed <= slow_speed) ? slow_gain : fast_gain;
     }
@@ -1620,6 +1618,45 @@ static int32_t iqs9151_two_finger_scroll_gain_x100(const struct iqs9151_params *
     }
     return slow_gain + (int32_t)(((int64_t)(fast_gain - slow_gain) * (speed - slow_speed)) /
                                  (fast_speed - slow_speed));
+}
+
+static int32_t iqs9151_two_finger_scroll_gain_x100(const struct iqs9151_params *p, int32_t speed) {
+    return iqs9151_speed_gain_x100(p->f2_scroll_slow_speed, p->f2_scroll_fast_speed,
+                                   p->f2_scroll_slow_gain_x100, p->f2_scroll_fast_gain_x100,
+                                   speed);
+}
+
+/*
+ * 1F カーソル移動量に速度別ゲインを掛ける。2F スクロールと同じ方式で、速度は
+ * 1 フレームのマンハッタン距離、端数は軸ごとに持ち越す。カーソルの送出と慣性の
+ * 速度履歴の両方にこの値を使い、フリック後の慣性がゲイン前の速度に戻らないようにする。
+ * カーソルフレームでないときは端数を捨て、生の移動量をそのまま返す。
+ */
+static void iqs9151_cursor_apply_gain(struct iqs9151_data *data, const struct iqs9151_frame *frame,
+                                      bool cursor_frame, int16_t *out_x, int16_t *out_y) {
+    const struct iqs9151_params *p = &data->params;
+
+    if (!cursor_frame) {
+        data->cursor_gain_remainder_x = 0;
+        data->cursor_gain_remainder_y = 0;
+        *out_x = frame->rel_x;
+        *out_y = frame->rel_y;
+        return;
+    }
+
+    const int32_t speed = iqs9151_abs32(frame->rel_x) + iqs9151_abs32(frame->rel_y);
+    const int32_t gain_x100 =
+        iqs9151_speed_gain_x100(p->cursor_slow_speed, p->cursor_fast_speed,
+                                p->cursor_slow_gain_x100, p->cursor_fast_gain_x100, speed);
+    const int32_t acc_x = data->cursor_gain_remainder_x + (frame->rel_x * gain_x100);
+    const int32_t acc_y = data->cursor_gain_remainder_y + (frame->rel_y * gain_x100);
+    const int32_t gained_x = acc_x / 100;
+    const int32_t gained_y = acc_y / 100;
+
+    data->cursor_gain_remainder_x = acc_x - (gained_x * 100);
+    data->cursor_gain_remainder_y = acc_y - (gained_y * 100);
+    *out_x = (int16_t)CLAMP(gained_x, INT16_MIN, INT16_MAX);
+    *out_y = (int16_t)CLAMP(gained_y, INT16_MIN, INT16_MAX);
 }
 
 /*
@@ -2880,7 +2917,9 @@ static void iqs9151_update_inertia_ema(struct iqs9151_data *data,
                                        int64_t now_ms,
                                        bool released_from_hold,
                                        bool cursor_moving,
-                                       bool suppress_cursor_tail) {
+                                       bool suppress_cursor_tail,
+                                       int16_t cursor_rel_x,
+                                       int16_t cursor_rel_y) {
     const bool finger1_started =
         (prev_frame->finger_count == 0U) && (frame->finger_count == 1U);
     const bool cursor_released =
@@ -2913,9 +2952,9 @@ static void iqs9151_update_inertia_ema(struct iqs9151_data *data,
         if (frame->finger_count == 1U && cursor_moving) {
             iqs9151_inertia_cancel(&data->inertia_cursor, &data->inertia_cursor_work);
             iqs9151_ema_update(&data->cursor_ema_x_fp, &data->cursor_ema_y_fp,
-                               frame->rel_x, frame->rel_y, data->cursor_params.ema_alpha);
-            iqs9151_motion_history_push(&data->cursor_motion_history, frame->rel_x,
-                                        frame->rel_y, now_ms);
+                               cursor_rel_x, cursor_rel_y, data->cursor_params.ema_alpha);
+            iqs9151_motion_history_push(&data->cursor_motion_history, cursor_rel_x,
+                                        cursor_rel_y, now_ms);
         }
     }
 
@@ -2956,11 +2995,9 @@ static void iqs9151_update_inertia_ema(struct iqs9151_data *data,
 static void iqs9151_report_frame_events(struct iqs9151_data *data,
                                         const struct iqs9151_frame *frame,
                                         const struct iqs9151_two_finger_result *two_result,
-                                        bool cursor_moving,
-                                        bool suppress_cursor_tail) {
-    const bool cursor_frame =
-        frame->finger_count == 1U && cursor_moving && !suppress_cursor_tail;
-
+                                        bool cursor_frame,
+                                        int16_t cursor_rel_x,
+                                        int16_t cursor_rel_y) {
     if (frame->finger_count != 1U) {
         iqs9151_cursor_flush(data);
     }
@@ -2982,7 +3019,7 @@ static void iqs9151_report_frame_events(struct iqs9151_data *data,
     } else if (two_result->scroll_active) {
         iqs9151_report_scroll(data, two_result->scroll_x, two_result->scroll_y);
     } else if (cursor_frame) {
-        iqs9151_report_cursor(data, frame->rel_x, frame->rel_y);
+        iqs9151_report_cursor(data, cursor_rel_x, cursor_rel_y);
     }
 }
 
@@ -3023,8 +3060,14 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
         iqs9151_motion_history_reset(&data->cursor_motion_history);
     }
 
-    iqs9151_report_frame_events(data, frame, &two_result, cursor_moving,
-                                suppress_cursor_tail);
+    const bool cursor_frame =
+        frame->finger_count == 1U && cursor_moving && !suppress_cursor_tail;
+    int16_t cursor_rel_x;
+    int16_t cursor_rel_y;
+
+    iqs9151_cursor_apply_gain(data, frame, cursor_frame, &cursor_rel_x, &cursor_rel_y);
+    iqs9151_report_frame_events(data, frame, &two_result, cursor_frame, cursor_rel_x,
+                                cursor_rel_y);
     iqs9151_summary_end_frame(data, frame, prev_frame.finger_count, now_ms);
 
     {
@@ -3065,7 +3108,7 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
 
     iqs9151_update_inertia_ema(data, frame, &prev_frame, &two_result, now_ms,
                                released_from_hold, cursor_moving,
-                               suppress_cursor_tail);
+                               suppress_cursor_tail, cursor_rel_x, cursor_rel_y);
     iqs9151_update_prev_frame(data, frame, &prev_frame);
     iqs9151_push_finger_history(data, frame->finger_count, now_ms);
 }

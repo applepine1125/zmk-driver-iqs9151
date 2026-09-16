@@ -114,6 +114,16 @@
     （イベントモードでは指を離した後にフレームが来ないため）
   - 確定時の基準時刻は猶予に入った時刻で、待った時間は Tap/Drag 判定の経過時間に含めない
   - 1回目Tapの deferred-click 保持中には適用しない
+- 1F Cursor 送出量:
+  - `finger_count==1` かつ `MOVEMENT_DETECTED` のフレームの `rel_x/rel_y` に速度別ゲインを掛けて
+    `REL_X/Y` として送出する
+  - 速度は `abs(rel_x) + abs(rel_y)`（1フレームのマンハッタン距離）
+  - `<= CURSOR_SLOW_SPEED` は `CURSOR_SLOW_GAIN_X100`、`>= CURSOR_FAST_SPEED` は
+    `CURSOR_FAST_GAIN_X100`、その間は線形補間（整数除算）
+  - `SLOW_SPEED >= FAST_SPEED` のときは補間せず二値にする（ゼロ除算回避）
+  - 端数は軸ごとに持ち越し、カーソルフレームでないフレーム（指を離した・2F 以上・移動なし）でリセットする
+  - Cursor Inertia の速度履歴にもゲイン後の値を入れる（フリック後の慣性がゲイン前の速度に戻らないため）
+  - 既定はどちらも 100（等倍）で、devicetree の `zip_xy_scaler` とは別に掛かる
 - 1F Cursor Inertia:
   - 発動: `1->0` release かつ hold release 由来でない場合のみ
   - 直近 `CONFIG_INPUT_IQS9151_CURSOR_INERTIA_RECENT_WINDOW_MS` ms の
@@ -345,3 +355,6 @@
   - 2F Scroll の送出量に速度別ゲイン（`TWO_FINGER_SCROLL_SLOW_SPEED` /
     `FAST_SPEED` / `SLOW_GAIN_X100` / `FAST_GAIN_X100`）を追加。
     既定は等倍で従来と同じ挙動、端数は軸ごとに持ち越す
+- 2026-09-16: 1F Cursor の送出量に速度別ゲイン（`CURSOR_SLOW_SPEED` / `FAST_SPEED` /
+  `SLOW_GAIN_X100` / `FAST_GAIN_X100`）を追加。2F Scroll と同じ補間方式で、
+  既定は等倍。Cursor Inertia の速度履歴にもゲイン後の値を使う
