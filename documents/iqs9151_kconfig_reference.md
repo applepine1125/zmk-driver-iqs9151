@@ -42,6 +42,7 @@
 |`CONFIG_INPUT_IQS9151_ALP_SET_DEBOUNCE`|int|`2`|ALP Set Debounce（0x11D0）|
 |`CONFIG_INPUT_IQS9151_ALP_CLEAR_DEBOUNCE`|int|`2`|ALP Clear Debounce（0x11D1）|
 |`CONFIG_INPUT_IQS9151_STATIONARY_TOUCH_MOV_THRESHOLD`|int|`5`|Stationary Touch Movement Threshold（0x11F0）|
+|`CONFIG_INPUT_IQS9151_FINGER_SPLIT_FACTOR`|int|`3`|Finger Split Factor（0x11F1）。隣接した 2 本の指を分けて数える強さ。0 で分割しない、大きいほど分けやすい|
 |`CONFIG_INPUT_IQS9151_JITTER_FILTER_DELTA`|int|`2`|Jitter Filter Delta Threshold（0x11F4）|
 |`CONFIG_INPUT_IQS9151_FINGER_CONFIDENCE_THRESHOLD`|int|`20`|Finger Confidence Threshold（0x11F5）|
 

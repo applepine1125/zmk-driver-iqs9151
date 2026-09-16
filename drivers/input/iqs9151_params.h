@@ -20,7 +20,7 @@ enum iqs9151_param_kind {
 
 /*
  * X(field, name, default, min, max, kind, reg)
- * IC 系 20 個を先頭に置く。index を IC 書き込みの保留ビットに使う。
+ * IC 系 21 個を先頭に置く。index を IC 書き込みの保留ビットに使う。
  */
 #define IQS9151_PARAM_LIST(X)                                                                   \
     X(touch_set_threshold, "touch_set_threshold", CONFIG_INPUT_IQS9151_TOUCH_SET_THRESHOLD,     \
@@ -35,6 +35,8 @@ enum iqs9151_param_kind {
     X(stationary_touch_mov_threshold, "stationary_touch_mov_threshold",                         \
       CONFIG_INPUT_IQS9151_STATIONARY_TOUCH_MOV_THRESHOLD, 0, 255, IQS9151_PARAM_IC_U8,         \
       IQS9151_ADDR_STATIONARY_TOUCH_MOV_THRESHOLD)                                              \
+    X(finger_split_factor, "finger_split_factor", CONFIG_INPUT_IQS9151_FINGER_SPLIT_FACTOR, 0,  \
+      255, IQS9151_PARAM_IC_U8, IQS9151_ADDR_FINGER_SPLIT_FACTOR)                               \
     X(jitter_filter_delta, "jitter_filter_delta", CONFIG_INPUT_IQS9151_JITTER_FILTER_DELTA, 0,  \
       255, IQS9151_PARAM_IC_U8, IQS9151_ADDR_JITTER_FILTER_DELTA)                               \
     X(finger_confidence_threshold, "finger_confidence_threshold",                               \
@@ -76,7 +78,7 @@ enum iqs9151_param_kind {
     X(dynamic_filter_top_speed, "dynamic_filter_top_speed",                                     \
       CONFIG_INPUT_IQS9151_DYNAMIC_FILTER_TOP_SPEED, 0, 2047, IQS9151_PARAM_IC_U16,             \
       IQS9151_ADDR_XY_DYNAMIC_FILTER_TOP_SPEED)                                                 \
-    /* ここまで IC 系 20 個 */                                                                   \
+    /* ここまで IC 系 21 個 */                                                                   \
     X(f1_tap_enable, "1f_tap_enable", IS_ENABLED(CONFIG_INPUT_IQS9151_1F_TAP_ENABLE), 0, 1,     \
       IQS9151_PARAM_DRIVER_BOOL, 0)                                                             \
     X(f1_tap_max_ms, "1f_tap_max_ms", CONFIG_INPUT_IQS9151_1F_TAP_MAX_MS, 1, 1000,              \
@@ -174,7 +176,7 @@ enum iqs9151_param_kind {
     X(cursor_fast_gain_x100, "cursor_fast_gain_x100",                                           \
       CONFIG_INPUT_IQS9151_CURSOR_FAST_GAIN_X100, 0, 400, IQS9151_PARAM_DRIVER, 0)
 
-#define IQS9151_PARAM_IC_COUNT 20
+#define IQS9151_PARAM_IC_COUNT 21
 
 struct iqs9151_params {
 #define IQS9151_PARAM_FIELD(field, name, def, min, max, kind, reg) int32_t field;
